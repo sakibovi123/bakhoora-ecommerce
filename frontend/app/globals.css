@@ -1,0 +1,328 @@
+@import "tailwindcss";
+
+@theme {
+  /* ---- palette: warm paper + ink, one amber accent ---- */
+  --color-paper: #f6f2ea;
+  --color-paper-2: #efe8dc;
+  --color-paper-3: #e6dccc;
+  --color-ink: #16140f;
+  --color-ink-2: #2a261e;
+  --color-muted: #6f695c;
+  --color-line: #ddd4c4;
+  --color-accent: #8c5a2b;
+  --color-accent-soft: #c79a5f;
+  --color-night: #14120e;
+
+
+  /* ---- data-viz mark hue ----
+     A hair more saturated than --color-accent: the accent's chroma (0.091) sits
+     under the 0.10 floor where a fill starts reading grey. This step clears the
+     floor, the OKLCH lightness band and 3:1 contrast on --color-paper. */
+  --color-chart: #8f5518;
+
+  /* ---- type ---- */
+  --font-display: var(--font-instrument), Georgia, serif;
+  --font-sans: var(--font-roboto), ui-sans-serif, system-ui, sans-serif;
+
+  /* ---- motion ---- */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ---- panel accent hues ----
+   Deliberately NOT inside @theme: Tailwind only emits theme variables it can
+   see referenced in the source, and these are reached through var(--tone-*),
+   assigned at runtime by toneVars(). Inside @theme the -hover steps were
+   tree-shaken and row hover silently did nothing on three of the four tables.
+
+   Four hues, assigned by what a thing IS rather than decoratively: money is
+   green, orders blue, the catalogue amber, people plum. Validated as a
+   categorical set on --color-paper (all pairs, worst normal-vision deltaE 17.5),
+   so no two are confusable — including under protanopia and deuteranopia.
+   Each has a 14% tint for surfaces (-soft) and a 26% one a step above it
+   (-tint); ink clears 11:1 on both, and the hue itself clears 3:1 on its own
+   tint, so a coloured icon stays legible on a coloured card. */
+:root {
+  --color-amber: #8f5518;
+  --color-amber-soft: #e8dccd;
+  --color-amber-tint: #dbc9b3;
+
+  --color-green: #2e8b57;
+  /* Paper text on --color-green is only 3.8:1. A filled pill is small text,
+     so it uses this deeper step (5.5:1) while the identity hue stays above. */
+  --color-green-deep: #246e46;
+  --color-green-soft: #dae4d5;
+  --color-green-tint: #c2d7c4;
+
+  --color-blue: #1f5f9c;
+  --color-blue-soft: #d8dddf;
+  --color-blue-tint: #beccd6;
+
+  --color-plum: #a12f7d;
+  --color-plum-soft: #ead7db;
+  --color-plum-tint: #e0bfce;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: var(--color-ink);
+    color: var(--color-paper);
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    line-height: 0.95;
+  }
+
+  input,
+  textarea,
+  select {
+    font-family: inherit;
+  }
+
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible,
+  button:focus-visible,
+  a:focus-visible {
+    outline: 1px solid var(--color-ink);
+    outline-offset: 3px;
+  }
+}
+
+@layer components {
+  /* uppercase micro-label — the rhythm device borrowed from editorial layouts */
+  .label {
+    font-size: 0.6875rem;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    font-weight: 500;
+  }
+
+  .shell {
+    width: 100%;
+    max-width: 88rem;
+    margin-inline: auto;
+    padding-inline: 1.25rem;
+  }
+
+  @media (min-width: 768px) {
+    .shell {
+      padding-inline: 2.5rem;
+    }
+  }
+
+  /* display sizes that stay readable from phone to 4k */
+  .display-xl {
+    font-size: clamp(3rem, 11vw, 10rem);
+  }
+
+  .display-lg {
+    font-size: clamp(2.5rem, 7vw, 6rem);
+  }
+
+  .display-md {
+    font-size: clamp(2rem, 4.5vw, 3.75rem);
+  }
+
+  .link-underline {
+    background-image: linear-gradient(currentColor, currentColor);
+    background-size: 0% 1px;
+    background-position: 0 100%;
+    background-repeat: no-repeat;
+    transition: background-size 0.4s var(--ease-out-expo);
+  }
+
+  .link-underline:hover {
+    background-size: 100% 1px;
+  }
+}
+
+  /* ---- data tables on a phone ----
+     A 7-column table cannot shrink to 375px, and side-scrolling a table you
+     have to read every row of is miserable. Below md each row becomes a
+     stacked card and the column header rides along as a label, pulled from
+     data-label (set automatically by <Row>). Pure CSS, so it survives with no
+     JS and cannot desync from the markup. */
+  @media (max-width: 767px) {
+    .data-table thead {
+      display: none;
+    }
+
+    .data-table,
+    .data-table tbody,
+    .data-table tr,
+    .data-table td {
+      display: block;
+      width: 100%;
+    }
+
+    .data-table tr {
+      border-bottom: 1px solid var(--color-line);
+      padding: 0.5rem 0 0.75rem;
+    }
+
+    .data-table td {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.3125rem 1rem;
+      text-align: left;
+    }
+
+    .data-table td::before {
+      content: attr(data-label);
+      flex: none;
+      font-size: 0.6875rem;
+      font-weight: 500;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+    }
+
+    /* Action columns have no header; give the control the full width instead. */
+    .data-table td[data-label=""] {
+      justify-content: flex-end;
+    }
+
+    .data-table td[data-label=""]::before {
+      content: none;
+    }
+
+    /* Inputs inside a cell (the variant editor) should fill the row. */
+    .data-table td > input,
+    .data-table td > .cell-grow {
+      width: 100%;
+      max-width: 60%;
+    }
+
+    /* A spanning cell — the expandable stock editor — is a full-width panel,
+       not a label/value pair, so it opts out of the two-column treatment. */
+    .data-table td[colspan] {
+      display: block;
+    }
+
+    .data-table td[colspan]::before {
+      content: none;
+    }
+  }
+
+  /* A stat tile tinted by its own hue. Set --tone/--tone-soft on the element
+     (see toneVars in components/admin/tone.ts) and this does the rest.
+
+     Only small figure cards get this. Tables deliberately have no hover colour
+     at all: a tint that follows the pointer down a list is noise when you are
+     reading rows, and on a panel wrapping a table it floods the whole surface. */
+  .tone-tile {
+    border-color: var(--color-line);
+    transition:
+      background-color 0.25s var(--ease-out-expo),
+      border-color 0.25s var(--ease-out-expo);
+  }
+
+  .tone-tile:hover {
+    background-color: var(--tone-soft);
+    border-color: var(--tone);
+  }
+
+  /* ---- printing ----
+     The invoice lives inside the panel, so printing has to strip the shell.
+     Hiding by visibility rather than display keeps the sheet's layout intact;
+     display:none on an ancestor would collapse it too. */
+  @media print {
+    body * {
+      visibility: hidden;
+    }
+
+    .invoice-sheet,
+    .invoice-sheet * {
+      visibility: visible;
+    }
+
+    .invoice-sheet {
+      position: absolute;
+      inset: 0 auto auto 0;
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      box-shadow: none;
+    }
+
+    .no-print {
+      display: none !important;
+    }
+
+    @page {
+      size: A4;
+      margin: 16mm;
+    }
+  }
+
+@layer utilities {
+  .reveal {
+    opacity: 0;
+    transform: translateY(1.5rem);
+    transition:
+      opacity 0.9s var(--ease-out-expo),
+      transform 0.9s var(--ease-out-expo);
+  }
+
+  .reveal-in {
+    opacity: 1;
+    transform: none;
+  }
+
+  .marquee-track {
+    animation: marquee 38s linear infinite;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+}
+
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .marquee-track {
+    animation: none;
+  }
+}
