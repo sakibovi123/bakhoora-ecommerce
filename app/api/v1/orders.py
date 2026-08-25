@@ -4,6 +4,8 @@ from typing import Any
 from fastapi import APIRouter, status
 
 from app.api.deps import CurrentUser, DbSession, PageParams
+from app.core import cache
+from app.core.config import settings
 from app.models.order import Order
 from app.payments import available_providers
 from app.schemas.common import Page
@@ -28,12 +30,25 @@ async def checkout(data: CheckoutRequest, user: CurrentUser, db: DbSession) -> C
 
 
 @router.get("", response_model=Page[OrderListItem])
-async def my_orders(user: CurrentUser, db: DbSession, params: PageParams) -> Page[OrderListItem]:
-    items, total = await order_service.list_orders(
-        db, page=params.page, size=params.size, user_id=user.id
-    )
-    return Page.create(
-        [OrderListItem.model_validate(item) for item in items], total, params.page, params.size
+async def my_orders(user: CurrentUser, db: DbSession, params: PageParams) -> dict:
+    async def build() -> dict:
+        items, total = await order_service.list_orders(
+            db, page=params.page, size=params.size, user_id=user.id
+        )
+        page = Page.create(
+            [OrderListItem.model_validate(item) for item in items], total, params.page, params.size
+        )
+        return page.model_dump(mode="json")
+
+    # user.id leads the key. This endpoint returns one customer's orders, and a
+    # key built only from the pagination arguments would hand the first
+    # caller's orders to every other caller on the same page — the one bug in
+    # this file that would matter.
+    return await cache.cache.get_or_set(
+        cache.ORDERS,
+        cache.make_key("mine", user.id, page=params.page, size=params.size),
+        build,
+        ttl=settings.CACHE_TTL_ORDERS,
     )
 
 

@@ -1,11 +1,13 @@
 import re
 
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.pool import NullPool
 
+from app.core.cache import cache
 from app.core.config import settings
 from app.core.security import hash_password
 from app.db.base import Base
@@ -21,6 +23,19 @@ from app.utils.sizes import DEFAULT_VARIANT_SIZES_ML
 TEST_SCHEMA = settings.TEST_SCHEMA
 assert re.fullmatch(r"[a-z_][a-z0-9_]*", TEST_SCHEMA), "TEST_SCHEMA must be a bare identifier"
 assert TEST_SCHEMA != "public"
+
+
+@pytest.fixture(autouse=True)
+def reset_cache():
+    """The cache is a module-level singleton; the database is not.
+
+    Every test builds a fresh schema, so an entry left over from the previous
+    test describes rows that no longer exist. Clearing between tests keeps that
+    leakage out, and resets the hit/miss counters the cache tests assert on.
+    """
+    cache.clear()
+    yield
+    cache.clear()
 
 
 @pytest_asyncio.fixture

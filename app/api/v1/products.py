@@ -5,6 +5,8 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, File, Query, UploadFile, status
 
 from app.api.deps import DbSession, PageParams, ProductsManager
+from app.core import cache
+from app.core.config import settings
 from app.models.product import Product, ProductVariant
 from app.schemas.common import Page
 from app.schemas.product import (
@@ -34,9 +36,8 @@ async def list_products(
     featured: bool | None = None,
     in_stock: bool | None = None,
     sort: Literal["newest", "oldest", "name", "price_asc", "price_desc"] = "newest",
-) -> Page[ProductOut]:
-    items, total = await product_service.list_products(
-        db,
+) -> dict:
+    filters = dict(
         page=params.page,
         size=params.size,
         search=search,
@@ -48,8 +49,22 @@ async def list_products(
         in_stock=in_stock,
         sort=sort,
     )
-    return Page.create(
-        [ProductOut.model_validate(item) for item in items], total, params.page, params.size
+
+    async def build() -> dict:
+        items, total = await product_service.list_products(db, **filters)
+        page = Page.create(
+            [ProductOut.model_validate(item) for item in items], total, params.page, params.size
+        )
+        return page.model_dump(mode="json")
+
+    # Every filter is part of the key — two searches that differ only by brand
+    # are different result sets, and sharing an entry between them would serve
+    # one shopper's filter to another.
+    return await cache.cache.get_or_set(
+        cache.PRODUCTS,
+        cache.make_key(**filters),
+        build,
+        ttl=settings.CACHE_TTL_PRODUCTS,
     )
 
 

@@ -1,0 +1,70 @@
+"""Cache invalidation driven by the ORM, not by call sites.
+
+The alternative is a `cache.invalidate(...)` line after every `db.commit()` in
+the service layer. There are roughly fifteen of those and the failure mode of
+forgetting one is silent: an endpoint keeps serving data that changed. Here the
+session reports which mapped classes it wrote, and the namespaces follow from
+that, so a new write path is covered the day it is written.
+
+It also gets a coupling right that is easy to miss by hand. Checkout and
+restock adjust `ProductVariant.stock_quantity`, and `VariantOut` exposes both
+`stock_quantity` and `in_stock` — so placing an order has to invalidate the
+*product* cache, not just the order cache. Because the variant rows are dirty
+in the same flush, that happens without anyone remembering it.
+
+Invalidation is deferred to `after_commit`: a flush that later rolls back must
+not clear anything, and dropping entries early only costs a needless refill.
+"""
+
+from itertools import chain
+
+from sqlalchemy import event
+from sqlalchemy.orm import Session
+
+from app.core.cache import CATEGORIES, ORDERS, PRODUCTS, cache
+from app.models.category import Category
+from app.models.order import Order, OrderItem
+from app.models.payment import Payment
+from app.models.product import Product, ProductImage, ProductVariant
+
+_SESSION_KEY = "pending_cache_namespaces"
+
+# A category's slug and active flag are both filters on the product list, and
+# deleting one moves products, so category writes clear the product cache too.
+NAMESPACES: dict[type, frozenset[str]] = {
+    Category: frozenset({CATEGORIES, PRODUCTS}),
+    Product: frozenset({PRODUCTS}),
+    ProductVariant: frozenset({PRODUCTS}),
+    ProductImage: frozenset({PRODUCTS}),
+    Order: frozenset({ORDERS}),
+    OrderItem: frozenset({ORDERS}),
+    Payment: frozenset({ORDERS}),
+}
+
+
+def namespaces_for(instances) -> set[str]:
+    dirty: set[str] = set()
+    for instance in instances:
+        dirty |= NAMESPACES.get(type(instance), frozenset())
+    return dirty
+
+
+@event.listens_for(Session, "after_flush")
+def _collect(session: Session, flush_context) -> None:
+    """Record what this flush touched. Reading it here is required — by
+    `after_commit` the identity sets are already empty."""
+    touched = namespaces_for(chain(session.new, session.dirty, session.deleted))
+    if touched:
+        session.info.setdefault(_SESSION_KEY, set()).update(touched)
+
+
+@event.listens_for(Session, "after_commit")
+def _invalidate(session: Session) -> None:
+    pending = session.info.pop(_SESSION_KEY, None)
+    if pending:
+        cache.invalidate(*pending)
+
+
+@event.listens_for(Session, "after_rollback")
+def _discard(session: Session) -> None:
+    session.info.pop(_SESSION_KEY, None)

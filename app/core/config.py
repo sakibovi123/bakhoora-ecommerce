@@ -114,6 +114,20 @@ class Settings(BaseSettings):
     FREE_SHIPPING_THRESHOLD: Decimal = Decimal("3000")
     LOW_STOCK_THRESHOLD: int = 5
 
+    # --- read cache (app.core.cache) ---
+    # TTLs are the ceiling on staleness, not the main invalidation route: every
+    # write invalidates its namespace immediately. They exist because each
+    # uvicorn worker caches independently, so a write in one worker is only
+    # visible to the others once their copies expire. Short TTLs on volatile
+    # data, long ones on the catalogue's shape.
+    CACHE_ENABLED: bool = True
+    CACHE_MAX_ENTRIES: int = 512
+    CACHE_TTL_CATEGORIES: int = 300
+    CACHE_TTL_PRODUCTS: int = 60
+    # Orders belong to one customer and change under them; kept brief so a
+    # multi-worker deployment cannot show a stale list for long.
+    CACHE_TTL_ORDERS: int = 15
+
     CORS_ORIGINS: str = "*"
     # Set explicitly to allow a pattern of origins in a deployed environment.
     # Left empty, local runs fall back to LOCALHOST_ORIGIN_REGEX (see below).

@@ -73,3 +73,9 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         except Exception:
             await session.rollback()
             raise
+
+
+# Registers the ORM-level cache invalidation listeners. Imported for the side
+# effect and kept at the bottom: app.db.cache_events imports the models, which
+# import app.db.base, so importing it at the top would close a cycle.
+from app.db import cache_events  # noqa: E402,F401

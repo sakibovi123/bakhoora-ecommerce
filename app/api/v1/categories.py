@@ -3,6 +3,8 @@ import uuid
 from fastapi import APIRouter, status
 
 from app.api.deps import CategoriesManager, DbSession
+from app.core import cache
+from app.core.config import settings
 from app.models.category import Category
 from app.schemas.category import CategoryCreate, CategoryOut, CategoryTree, CategoryUpdate
 from app.services import category_service
@@ -10,14 +12,35 @@ from app.services import category_service
 router = APIRouter(prefix="/categories", tags=["categories"])
 
 
+# Cached as serialised dicts, not ORM rows: a Category loaded in one request's
+# session is unusable once that session closes, so the cache stores the response
+# body and FastAPI re-validates it against response_model on the way out.
 @router.get("", response_model=list[CategoryOut])
-async def list_categories(db: DbSession) -> list[Category]:
-    return await category_service.list_categories(db)
+async def list_categories(db: DbSession) -> list[dict]:
+    async def build() -> list[dict]:
+        rows = await category_service.list_categories(db)
+        return [CategoryOut.model_validate(row).model_dump(mode="json") for row in rows]
+
+    return await cache.cache.get_or_set(
+        cache.CATEGORIES,
+        cache.make_key("list"),
+        build,
+        ttl=settings.CACHE_TTL_CATEGORIES,
+    )
 
 
 @router.get("/tree", response_model=list[CategoryTree])
-async def category_tree(db: DbSession) -> list[CategoryTree]:
-    return category_service.build_tree(await category_service.list_categories(db))
+async def category_tree(db: DbSession) -> list[dict]:
+    async def build() -> list[dict]:
+        rows = await category_service.list_categories(db)
+        return [node.model_dump(mode="json") for node in category_service.build_tree(rows)]
+
+    return await cache.cache.get_or_set(
+        cache.CATEGORIES,
+        cache.make_key("tree"),
+        build,
+        ttl=settings.CACHE_TTL_CATEGORIES,
+    )
 
 
 @router.get("/{slug}", response_model=CategoryOut)
