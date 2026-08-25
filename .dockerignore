@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.git/
+.gitignore
+# Secrets live in Railway's variables, never in the image.
+.env
+.env.*
+!.env.example
+# The Next.js app is a separate service with its own root directory.
+frontend/
+# Local uploads and databases are not part of the build.
+media/
+*.log
+tests/
+BUILD_GUIDE.md
+Dockerfile
+.dockerignore
