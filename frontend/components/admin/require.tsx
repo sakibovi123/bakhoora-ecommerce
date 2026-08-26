@@ -10,6 +10,7 @@ import type { MenuAction, MenuKey } from "@/lib/admin/types";
 
 const LABELS: Record<MenuKey, string> = {
   dashboard: "the dashboard",
+  reports: "sales reports",
   orders: "orders",
   products: "products",
   categories: "categories",

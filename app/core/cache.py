@@ -35,6 +35,19 @@ from app.core.config import settings
 CATEGORIES = "categories"
 PRODUCTS = "products"
 ORDERS = "orders"
+# Sales reports get namespaces of their own rather than riding on ORDERS.
+# Sharing that one meant every checkout threw away report entries that cost
+# several aggregate scans to build, so on a shop taking orders steadily the
+# report cache never got to be warm.
+#
+# REPORTS holds ranges that run up to today: still moving, so an order write
+# clears them and the short TTL is only a backstop.
+# REPORTS_ARCHIVE holds ranges that ended before today. Those are all but
+# settled — only a status change on an older order (a refund, say) moves the
+# numbers — so they survive order writes and the longer TTL is the staleness
+# bound, deliberately traded for not rebuilding a two-year report on every sale.
+REPORTS = "reports"
+REPORTS_ARCHIVE = "reports_archive"
 
 
 def make_key(*parts: Any, **kwargs: Any) -> str:

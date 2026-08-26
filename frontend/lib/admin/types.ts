@@ -19,6 +19,7 @@ export type PaymentStatus = "unpaid" | "pending" | "paid" | "failed" | "refunded
 /** Menu keys, mirroring MENUS in app/utils/menus.py. */
 export type MenuKey =
   | "dashboard"
+  | "reports"
   | "orders"
   | "products"
   | "categories"
@@ -226,6 +227,73 @@ export interface Dashboard {
   top_products: TopProduct[];
   recent_orders: OrderListItem[];
   low_stock: LowStockVariant[];
+}
+
+/* ------------------------------------------------------------- sales reports */
+
+export type Granularity = "daily" | "monthly";
+
+/** One day, or one month, of trading. */
+export interface SalesBucket {
+  /** ISO date: the day itself, or the first of the month. */
+  period: string;
+  /** Formatted by the API so every client renders the same month names. */
+  label: string;
+  orders: number;
+  units: number;
+  gross_sales: string;
+  discount: string;
+  shipping: string;
+  net_revenue: string;
+  cancelled_orders: number;
+  cancelled_value: string;
+  average_order_value: string;
+}
+
+export interface SalesSummary {
+  orders: number;
+  units: number;
+  gross_sales: string;
+  discount: string;
+  shipping: string;
+  net_revenue: string;
+  cancelled_orders: number;
+  cancelled_value: string;
+  average_order_value: string;
+  previous_net_revenue: string;
+  /** null when the preceding window sold nothing — growth from zero has no %. */
+  change_pct: number | null;
+  best_period: string | null;
+  best_period_revenue: string;
+}
+
+/** The range sliced by one dimension — order status, or payment method. */
+export interface ReportBreakdown {
+  key: string;
+  label: string;
+  orders: number;
+  revenue: string;
+}
+
+export interface ReportProduct {
+  product_id: string | null;
+  product_name: string;
+  units: number;
+  revenue: string;
+}
+
+export interface SalesReport {
+  granularity: Granularity;
+  start_date: string;
+  end_date: string;
+  /** The zone whose midnight divides one bucket from the next. */
+  timezone: string;
+  currency: string;
+  summary: SalesSummary;
+  buckets: SalesBucket[];
+  top_products: ReportProduct[];
+  status_breakdown: ReportBreakdown[];
+  payment_breakdown: ReportBreakdown[];
 }
 
 export interface CustomerDetail {

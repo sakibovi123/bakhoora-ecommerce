@@ -154,6 +154,12 @@ export const IconImage = (p: IconProps) => (
   </Icon>
 );
 
+export const IconReports = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 20V10M10 20V4M16 20v-7M4 20h17" />
+  </Icon>
+);
+
 export const IconStock = (p: IconProps) => (
   <Icon {...p}>
     <path d="M3 8.5 12 4l9 4.5-9 4.5z" />
@@ -245,6 +251,7 @@ export const IconSpinner = ({ className = "", ...p }: IconProps) => (
 /** Sidebar lookup, keyed the same way the API keys its menus. */
 export const MENU_ICONS = {
   dashboard: IconDashboard,
+  reports: IconReports,
   orders: IconOrders,
   products: IconProducts,
   categories: IconCategories,

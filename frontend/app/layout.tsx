@@ -1,21 +1,17 @@
 import type { Metadata } from "next";
-import { Instrument_Serif, Roboto } from "next/font/google";
+import { Poppins } from "next/font/google";
 
 import { SiteChrome } from "@/components/site-chrome";
 import { AuthProvider } from "@/lib/auth";
 
 import "./globals.css";
 
-const roboto = Roboto({
+// Poppins ships as static cuts, so the weights the UI actually uses have to be
+// listed explicitly — there is no variable axis to interpolate from.
+const poppins = Poppins({
   subsets: ["latin"],
-  variable: "--font-roboto",
-  display: "swap",
-});
-
-const instrument = Instrument_Serif({
-  subsets: ["latin"],
-  weight: "400",
-  variable: "--font-instrument",
+  weight: ["300", "400", "500", "600", "700"],
+  variable: "--font-poppins",
   display: "swap",
 });
 
@@ -38,7 +34,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${roboto.variable} ${instrument.variable}`}>
+    <html lang="en" className={poppins.variable}>
       <body className="min-h-dvh bg-paper text-ink">
         <AuthProvider>
           <SiteChrome>{children}</SiteChrome>

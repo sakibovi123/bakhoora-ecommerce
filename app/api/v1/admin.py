@@ -1,8 +1,9 @@
 import uuid
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Response, status
 
 from app.api.deps import (
     CategoriesManager,
@@ -16,9 +17,12 @@ from app.api.deps import (
     PageParams,
     ProductsManager,
     ProductsViewer,
+    ReportsViewer,
     RolesManager,
     RolesViewer,
 )
+from app.core import cache
+from app.core.config import settings
 from app.models.category import Category
 from app.models.order import Order, OrderStatus
 from app.models.product import Product
@@ -41,6 +45,7 @@ from app.schemas.order import (
     OrderStatusUpdate,
 )
 from app.schemas.product import ProductOut
+from app.schemas.report import Granularity, SalesReport
 from app.schemas.role import MenuOut, RoleCreate, RoleOut, RoleUpdate, menu_catalogue
 from app.schemas.user import UserOut
 from app.services import (
@@ -48,6 +53,7 @@ from app.services import (
     category_service,
     order_service,
     product_service,
+    report_service,
     role_service,
 )
 
@@ -69,6 +75,104 @@ async def dashboard(
     days: Annotated[int, Query(ge=7, le=90)] = 14,
 ) -> Dashboard:
     return await admin_service.dashboard(db, days=days)
+
+
+# --- sales reports ---------------------------------------------------------
+
+def _report_shelf(end: date) -> tuple[str, int]:
+    """Which cache a report of this range belongs on, and for how long.
+
+    A range still running up to today changes with the next sale, so it goes on
+    the shelf that order writes clear and gets a short TTL on top. A range that
+    already ended does not move except when someone refunds an old order, so it
+    is left alone by those writes and expires on time instead — which is what
+    stops last month's report being rebuilt every time this month sells
+    something."""
+    if end < report_service.today():
+        return cache.REPORTS_ARCHIVE, settings.CACHE_TTL_REPORTS_ARCHIVE
+    return cache.REPORTS, settings.CACHE_TTL_REPORTS
+
+
+async def _report(
+    db: DbSession, *, start: date, end: date, granularity: Granularity
+) -> dict[str, Any]:
+    """A report is three aggregate queries against Supabase. A panel that
+    polls, or a user flipping between the daily and monthly tabs, should not
+    pay for them twice."""
+
+    async def build() -> dict[str, Any]:
+        report = await report_service.sales_report(
+            db, start=start, end=end, granularity=granularity
+        )
+        return report.model_dump(mode="json")
+
+    namespace, ttl = _report_shelf(end)
+    return await cache.cache.get_or_set(
+        namespace,
+        cache.make_key("report", granularity, start, end),
+        build,
+        ttl=ttl,
+    )
+
+
+@router.get("/reports/daily", response_model=SalesReport)
+async def daily_sales(
+    db: DbSession,
+    _: ReportsViewer,
+    start: Annotated[date | None, Query(description="First day, shop-local")] = None,
+    end: Annotated[date | None, Query(description="Last day, inclusive")] = None,
+) -> dict[str, Any]:
+    """One row per calendar day, quiet days included. Defaults to 30 days."""
+    end = end or report_service.today()
+    start = start or end - timedelta(days=29)
+    return await _report(db, start=start, end=end, granularity="daily")
+
+
+@router.get("/reports/monthly", response_model=SalesReport)
+async def monthly_sales(
+    db: DbSession,
+    _: ReportsViewer,
+    year: Annotated[
+        int | None, Query(ge=2000, le=2100, description="Whole year; overrides start/end")
+    ] = None,
+    start: date | None = None,
+    end: date | None = None,
+) -> dict[str, Any]:
+    """One row per calendar month. Defaults to the last twelve."""
+    if year is not None:
+        start, end = date(year, 1, 1), date(year, 12, 31)
+    else:
+        end = end or report_service.today()
+        start = start or report_service.months_before(end, 11)
+    return await _report(db, start=start, end=end, granularity="monthly")
+
+
+@router.get("/reports/export")
+async def export_sales(
+    db: DbSession,
+    _: ReportsViewer,
+    granularity: Granularity = "daily",
+    start: date | None = None,
+    end: date | None = None,
+) -> Response:
+    """The same numbers as a CSV download. Uncached — it is a one-off click,
+    and a file served from cache is the one place staleness gets noticed."""
+    end = end or report_service.today()
+    if start is None:
+        start = (
+            end - timedelta(days=29)
+            if granularity == "daily"
+            else report_service.months_before(end, 11)
+        )
+    report = await report_service.sales_report(
+        db, start=start, end=end, granularity=granularity
+    )
+    filename = f"sales-{granularity}-{report.start_date}-{report.end_date}.csv"
+    return Response(
+        content=report_service.to_csv(report),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # --- catalogue -------------------------------------------------------------

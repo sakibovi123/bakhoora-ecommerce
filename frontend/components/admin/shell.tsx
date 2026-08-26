@@ -20,6 +20,7 @@ import type { MenuKey } from "@/lib/admin/types";
 
 const NAV: { href: string; label: string; menu: MenuKey; exact?: boolean }[] = [
   { href: "/admin", label: "Dashboard", menu: "dashboard", exact: true },
+  { href: "/admin/reports", label: "Sales reports", menu: "reports" },
   { href: "/admin/orders", label: "Orders", menu: "orders" },
   { href: "/admin/products", label: "Products", menu: "products" },
   { href: "/admin/categories", label: "Categories", menu: "categories" },

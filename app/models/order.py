@@ -3,7 +3,7 @@ import uuid
 from decimal import Decimal
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Enum, ForeignKey, Numeric, String, Text
+from sqlalchemy import Enum, ForeignKey, Index, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -51,6 +51,13 @@ def _enum(python_enum: type[enum.Enum], name: str) -> Enum:
 
 class Order(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "orders"
+
+    # Every sales report is a range scan on `created_at`; without this the
+    # planner has nothing to work with and reads the whole table for a report
+    # covering one day. `status` rides along as the second column because the
+    # revenue-only aggregates filter on it, which lets the range scan discard
+    # pending and cancelled rows before touching the heap.
+    __table_args__ = (Index("ix_orders_created_at_status", "created_at", "status"),)
 
     order_number: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
     user_id: Mapped[uuid.UUID | None] = mapped_column(

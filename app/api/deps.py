@@ -73,6 +73,7 @@ def menu_guard(menu: str, action: Action = VIEW):
 # One pair per menu, so a route reads as the permission it needs.
 DashboardViewer = menu_guard("dashboard")
 OrdersViewer = menu_guard("orders")
+ReportsViewer = menu_guard("reports")
 OrdersManager = menu_guard("orders", MANAGE)
 ProductsViewer = menu_guard("products")
 ProductsManager = menu_guard("products", MANAGE)

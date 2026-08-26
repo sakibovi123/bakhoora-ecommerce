@@ -99,13 +99,9 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
-    # --- storefront rules ---
-    # --- product images ---
     MAX_PRODUCT_IMAGES: int = 4
     MAX_IMAGE_BYTES: int = 5 * 1024 * 1024
-    # Where uploads are written, and the path they are served from. Files are
-    # stored under a relative URL so the database stays portable between
-    # environments — the client resolves it against the API's own origin.
+
     MEDIA_ROOT: str = "media"
     MEDIA_URL: str = "/media"
 
@@ -114,27 +110,23 @@ class Settings(BaseSettings):
     FREE_SHIPPING_THRESHOLD: Decimal = Decimal("3000")
     LOW_STOCK_THRESHOLD: int = 5
 
-    # --- read cache (app.core.cache) ---
-    # TTLs are the ceiling on staleness, not the main invalidation route: every
-    # write invalidates its namespace immediately. They exist because each
-    # uvicorn worker caches independently, so a write in one worker is only
-    # visible to the others once their copies expire. Short TTLs on volatile
-    # data, long ones on the catalogue's shape.
     CACHE_ENABLED: bool = True
     CACHE_MAX_ENTRIES: int = 512
     CACHE_TTL_CATEGORIES: int = 300
     CACHE_TTL_PRODUCTS: int = 60
-    # Orders belong to one customer and change under them; kept brief so a
-    # multi-worker deployment cannot show a stale list for long.
     CACHE_TTL_ORDERS: int = 15
 
     CORS_ORIGINS: str = "*"
-    # Set explicitly to allow a pattern of origins in a deployed environment.
-    # Left empty, local runs fall back to LOCALHOST_ORIGIN_REGEX (see below).
     CORS_ORIGIN_REGEX: str = ""
 
     FIRST_ADMIN_EMAIL: str = "admin@bakhoora.bd"
     FIRST_ADMIN_PASSWORD: str = "Admin123!"
+
+    REPORT_TIMEZONE: str = "Asia/Dhaka"
+    CACHE_TTL_REPORTS: int = 60
+    # Ranges that ended before today are not invalidated by order writes, so
+    # this is the whole staleness bound on them, not a backstop.
+    CACHE_TTL_REPORTS_ARCHIVE: int = 900
 
     @model_validator(mode="after")
     def _check_database_url(self) -> "Settings":

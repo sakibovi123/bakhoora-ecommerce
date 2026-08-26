@@ -1,5 +1,6 @@
 import type {
   AdminUser,
+  Granularity,
   Category,
   CustomerDetail,
   Dashboard,
@@ -14,6 +15,7 @@ import type {
   Product,
   ProductInput,
   RoleDetail,
+  SalesReport,
   Variant,
 } from "@/lib/admin/types";
 
@@ -114,6 +116,34 @@ async function call<T>(path: string, token: string | null, init: RequestInit = {
 
 const body = (value: unknown) => JSON.stringify(value);
 
+/**
+ * Fetch a file rather than JSON.
+ *
+ * The export route is guarded like every other admin route, so the download
+ * needs the bearer token — which rules out pointing an <a href> at it. Pulling
+ * the bytes here and handing back a Blob lets the caller drive a normal save.
+ */
+async function download(path: string, token: string): Promise<Blob> {
+  if (!apiConfigured) {
+    throw new ApiError("NEXT_PUBLIC_API_URL is not set", 0, "not_configured");
+  }
+  let response: Response;
+  try {
+    response = await fetch(`${BASE_URL}${path}`, {
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    throw new ApiError("Could not reach the API. Is the server running?", 0, "network");
+  }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    const { message, code } = messageFrom(payload, response.status);
+    throw new ApiError(message, response.status, code, payload);
+  }
+  return response.blob();
+}
+
 function query(params: Record<string, string | number | boolean | null | undefined>): string {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -132,6 +162,12 @@ export interface ProductQuery {
   low_stock?: boolean;
   active?: boolean | null;
   sort?: "newest" | "oldest" | "name" | "price_asc" | "price_desc";
+}
+
+export interface ReportQuery {
+  /** ISO dates. Omitted, the API picks the last 30 days or 12 months. */
+  start?: string | null;
+  end?: string | null;
 }
 
 export interface OrderQuery {
@@ -188,6 +224,16 @@ export const adminApi = {
   // --- dashboard ---
   dashboard: (token: string, days = 14) =>
     call<Dashboard>(`/admin/dashboard${query({ days })}`, token),
+
+  // --- sales reports ---
+  dailyReport: (token: string, params: ReportQuery = {}) =>
+    call<SalesReport>(`/admin/reports/daily${query({ ...params })}`, token),
+
+  monthlyReport: (token: string, params: ReportQuery & { year?: number | null } = {}) =>
+    call<SalesReport>(`/admin/reports/monthly${query({ ...params })}`, token),
+
+  reportCsv: (token: string, granularity: Granularity, params: ReportQuery = {}) =>
+    download(`/admin/reports/export${query({ granularity, ...params })}`, token),
 
   // --- products ---
   products: (token: string, params: ProductQuery = {}) =>

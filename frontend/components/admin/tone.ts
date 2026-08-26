@@ -55,6 +55,7 @@ export const TONE_BORDER: Record<Tone, string> = {
 /** Which hue each area of the panel belongs to. */
 export const MENU_TONE: Record<MenuKey, Tone> = {
   dashboard: "green",
+  reports: "green",
   orders: "blue",
   products: "amber",
   categories: "amber",

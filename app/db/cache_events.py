@@ -21,7 +21,7 @@ from itertools import chain
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 
-from app.core.cache import CATEGORIES, ORDERS, PRODUCTS, cache
+from app.core.cache import CATEGORIES, ORDERS, PRODUCTS, REPORTS, cache
 from app.models.category import Category
 from app.models.order import Order, OrderItem
 from app.models.payment import Payment
@@ -36,9 +36,11 @@ NAMESPACES: dict[type, frozenset[str]] = {
     Product: frozenset({PRODUCTS}),
     ProductVariant: frozenset({PRODUCTS}),
     ProductImage: frozenset({PRODUCTS}),
-    Order: frozenset({ORDERS}),
-    OrderItem: frozenset({ORDERS}),
-    Payment: frozenset({ORDERS}),
+    # REPORTS, not REPORTS_ARCHIVE: a report of a range that has already
+    # closed is left to expire on its TTL. See app/core/cache.py.
+    Order: frozenset({ORDERS, REPORTS}),
+    OrderItem: frozenset({ORDERS, REPORTS}),
+    Payment: frozenset({ORDERS, REPORTS}),
 }
 
 
