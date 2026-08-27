@@ -62,6 +62,26 @@
   --color-plum-tint: #e0bfce;
 }
 
+/* ---- admin panel surface ----
+   The storefront is warm paper; the back office is not. A panel is read for
+   hours at a time against a black rail, and the cream surface muddied every
+   tint sitting on it. Overriding the paper/line steps here — rather than
+   rewriting 130-odd utilities across the panel — repaints every admin surface
+   white while the storefront keeps its palette untouched. The sidebar's
+   text-paper stays white-on-black, which is what it was already reading as. */
+.admin-theme {
+  --color-paper: #ffffff;
+  --color-paper-2: #f5f5f4;
+  --color-paper-3: #e9e8e6;
+  --color-line: #e2e0dc;
+
+  /* The wrapper is the only thing behind an overscroll bounce, so it has to
+     carry the new surface too — otherwise the body's cream flashes at the
+     edges of a scroll. */
+  min-height: 100dvh;
+  background-color: var(--color-paper);
+}
+
 @layer base {
   html {
     scroll-behavior: smooth;

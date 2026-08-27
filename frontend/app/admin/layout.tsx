@@ -16,10 +16,12 @@ export const metadata: Metadata = {
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   return (
-    <ToastProvider>
-      <ConfirmProvider>
-        <AdminShell>{children}</AdminShell>
-      </ConfirmProvider>
-    </ToastProvider>
+    <div className="admin-theme">
+      <ToastProvider>
+        <ConfirmProvider>
+          <AdminShell>{children}</AdminShell>
+        </ConfirmProvider>
+      </ToastProvider>
+    </div>
   );
 }
