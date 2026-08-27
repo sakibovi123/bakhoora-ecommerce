@@ -1,0 +1,20 @@
+# The build installs from package-lock.json inside the image; a host
+# node_modules is the wrong platform's binaries and is the single biggest
+# thing slowing the context upload.
+node_modules/
+.next/
+out/
+build/
+
+# Secrets come from the platform's variables. Only the example is safe to ship.
+.env
+.env.*
+!.env.local.example
+
+*.tsbuildinfo
+.DS_Store
+*.log
+Dockerfile
+.dockerignore
+README.md
+ADMIN.md
