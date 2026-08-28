@@ -2,15 +2,16 @@
 
 import Link from "next/link";
 
-import { Bottle } from "@/components/bottle";
+import { CartLineThumb } from "@/components/cart-line-thumb";
 import { QuantityStepper } from "@/components/quantity-stepper";
 import { ButtonLink } from "@/components/ui";
-import { FREE_SHIPPING_THRESHOLD } from "@/lib/catalog";
 import { useCart } from "@/lib/cart-context";
-import { formatPrice } from "@/lib/format";
+import { useMoney, useShop } from "@/lib/shop-settings";
 
 export default function CartPage() {
   const { lines, subtotal, shipping, total, setQuantity, remove, clear, isReady } = useCart();
+  const shop = useShop();
+  const money = useMoney();
 
   if (!isReady) {
     return <div className="shell py-32" aria-busy />;
@@ -22,8 +23,10 @@ export default function CartPage() {
         <p className="label text-muted">Your bag</p>
         <h1 className="display-md mt-7">Empty, for now.</h1>
         <p className="mx-auto mt-6 max-w-sm leading-relaxed text-muted">
-          Nothing has been added yet. Free delivery starts at{" "}
-          {formatPrice(FREE_SHIPPING_THRESHOLD)}.
+          Nothing has been added yet.
+          {shop.freeDeliveryThreshold !== null ? (
+            <> Free delivery starts at {money(shop.freeDeliveryThreshold)}.</>
+          ) : null}
         </p>
         <div className="mt-10 flex justify-center">
           <ButtonLink href="/shop">Browse fragrances</ButtonLink>
@@ -38,7 +41,7 @@ export default function CartPage() {
         <div>
           <p className="label text-muted">Your bag</p>
           <h1 className="display-md mt-6">
-            {lines.length} {lines.length === 1 ? "blend" : "blends"}.
+            {lines.length} {lines.length === 1 ? "item" : "items"}.
           </h1>
         </div>
         <button onClick={clear} className="label link-underline text-muted">
@@ -53,35 +56,29 @@ export default function CartPage() {
               key={line.variantId}
               className="grid grid-cols-[6rem_1fr] gap-6 border-b border-line py-8 sm:grid-cols-[8rem_1fr]"
             >
-              <Link href={`/shop/${line.product.slug}`} className="bg-paper-2">
-                <Bottle
-                  tone={line.product.tone}
-                  shape={line.product.category === "attar" ? "vial" : "flacon"}
-                  className="aspect-square w-full"
-                />
+              <Link href={`/shop/${line.productSlug}`} className="bg-paper-2">
+                <CartLineThumb line={line} className="aspect-square w-full" />
               </Link>
 
               <div className="flex flex-col gap-4">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
                     <Link
-                      href={`/shop/${line.product.slug}`}
+                      href={`/shop/${line.productSlug}`}
                       className="link-underline font-display text-2xl leading-tight"
                     >
-                      {line.product.name}
+                      {line.name}
                     </Link>
-                    <p className="label mt-2 text-muted">
-                      {line.variant.name} · {line.variant.sku}
-                    </p>
-                    <p className="mt-2 text-sm text-muted">{line.product.tagline}</p>
+                    <p className="label mt-2 text-muted">{line.variantName}</p>
+                    {line.brand ? <p className="mt-2 text-sm text-muted">{line.brand}</p> : null}
                   </div>
-                  <p className="tabular-nums">{formatPrice(line.lineTotal)}</p>
+                  <p className="tabular-nums">{money(line.lineTotal)}</p>
                 </div>
 
                 <div className="mt-auto flex items-center justify-between">
                   <QuantityStepper
                     value={line.quantity}
-                    max={line.variant.stock}
+                    max={line.stock}
                     onChange={(next) => setQuantity(line.variantId, next)}
                   />
                   <button
@@ -103,15 +100,15 @@ export default function CartPage() {
             <dl className="mt-7 space-y-3 text-sm">
               <div className="flex justify-between">
                 <dt className="text-muted">Subtotal</dt>
-                <dd className="tabular-nums">{formatPrice(subtotal)}</dd>
+                <dd className="tabular-nums">{money(subtotal)}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-muted">Delivery</dt>
-                <dd className="tabular-nums">{shipping === 0 ? "Free" : formatPrice(shipping)}</dd>
+                <dd className="tabular-nums">{shipping === 0 ? "Free" : money(shipping)}</dd>
               </div>
               <div className="flex justify-between border-t border-line pt-4 text-xl">
                 <dt className="font-display">Total</dt>
-                <dd className="font-display tabular-nums">{formatPrice(total)}</dd>
+                <dd className="font-display tabular-nums">{money(total)}</dd>
               </div>
             </dl>
 

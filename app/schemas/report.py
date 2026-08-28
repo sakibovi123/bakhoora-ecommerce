@@ -22,6 +22,8 @@ class SalesBucket(BaseModel):
     cancelled_orders: int
     cancelled_value: Decimal
     average_order_value: Decimal
+    expenses: Decimal
+    net_profit: Decimal
 
 
 class SalesSummary(BaseModel):
@@ -34,8 +36,15 @@ class SalesSummary(BaseModel):
     cancelled_orders: int
     cancelled_value: Decimal
     average_order_value: Decimal
+    expenses: Decimal
+    net_profit: Decimal
     previous_net_revenue: Decimal
     change_pct: float | None
+    previous_expenses: Decimal
+    previous_net_profit: Decimal
+    # None rather than a number whenever the comparison window was not itself
+    # profitable: a percentage across a loss-to-profit sign flip is nonsense.
+    net_profit_change_pct: float | None
     best_period: date | None
     best_period_revenue: Decimal
 
@@ -56,6 +65,16 @@ class ReportProduct(BaseModel):
     revenue: Decimal
 
 
+class ExpenseBreakdown(BaseModel):
+    """Spend in one category. Deliberately not `ReportBreakdown`, whose count
+    field is named `orders` — an expense entry is not an order."""
+
+    key: uuid.UUID
+    label: str
+    entries: int
+    amount: Decimal
+
+
 class SalesReport(BaseModel):
     granularity: Granularity
     start_date: date
@@ -67,3 +86,4 @@ class SalesReport(BaseModel):
     top_products: list[ReportProduct]
     status_breakdown: list[ReportBreakdown]
     payment_breakdown: list[ReportBreakdown]
+    expense_breakdown: list[ExpenseBreakdown]

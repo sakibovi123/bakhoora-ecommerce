@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { Logo } from "@/components/logo";
+
 import { Newsletter } from "@/components/newsletter";
 import { CATEGORIES } from "@/lib/catalog";
 
@@ -18,10 +20,10 @@ export function SiteFooter() {
 
         <div className="mt-20 grid gap-12 border-t border-paper/15 pt-14 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
           <div>
-            <p className="font-display text-4xl">Bakhoora</p>
+            <Logo variant="horizontal" className="h-16" alt="Bakhoora" />
             <p className="mt-4 max-w-xs text-sm leading-relaxed text-paper/60">
-              Hand-blended attar, oud and eau de parfum. Bottled in Dhaka, shipped across
-              Bangladesh in two to four days.
+              Perfume decants and oils, poured to order in Dhaka and shipped across Bangladesh
+              in two to four days.
             </p>
           </div>
 

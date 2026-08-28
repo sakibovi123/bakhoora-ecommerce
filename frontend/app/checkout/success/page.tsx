@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { Reveal } from "@/components/reveal";
 import { ArrowLink, ButtonLink } from "@/components/ui";
+import { fetchShopSettings } from "@/lib/api";
 import { formatPrice } from "@/lib/format";
 
 export const metadata: Metadata = { title: "Order confirmed" };
@@ -23,6 +24,10 @@ export default async function SuccessPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
+  // A server component cannot use the context hook, so it reads the shop
+  // directly — same source, no provider in between.
+  const shop = await fetchShopSettings();
+  const money = (amount: number) => formatPrice(amount, shop.currencySymbol);
   const read = (key: string) => {
     const value = params[key];
     return Array.isArray(value) ? value[0] : value;
@@ -48,7 +53,7 @@ export default async function SuccessPage({
           </div>
           <div className="bg-paper p-7">
             <dt className="label text-muted">Total</dt>
-            <dd className="mt-3 font-display text-2xl tabular-nums">{formatPrice(total)}</dd>
+            <dd className="mt-3 font-display text-2xl tabular-nums">{money(total)}</dd>
           </div>
           <div className="bg-paper p-7">
             <dt className="label text-muted">Arrives</dt>

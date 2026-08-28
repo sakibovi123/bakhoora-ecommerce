@@ -21,11 +21,21 @@ from itertools import chain
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 
-from app.core.cache import CATEGORIES, ORDERS, PRODUCTS, REPORTS, cache
+from app.core.cache import (
+    CATEGORIES,
+    ORDERS,
+    PRODUCTS,
+    REPORTS,
+    REPORTS_ARCHIVE,
+    SETTINGS,
+    cache,
+)
 from app.models.category import Category
+from app.models.expense import Expense, ExpenseCategory
 from app.models.order import Order, OrderItem
 from app.models.payment import Payment
 from app.models.product import Product, ProductImage, ProductVariant
+from app.models.settings import ShopSettings
 
 _SESSION_KEY = "pending_cache_namespaces"
 
@@ -36,11 +46,27 @@ NAMESPACES: dict[type, frozenset[str]] = {
     Product: frozenset({PRODUCTS}),
     ProductVariant: frozenset({PRODUCTS}),
     ProductImage: frozenset({PRODUCTS}),
-    # REPORTS, not REPORTS_ARCHIVE: a report of a range that has already
-    # closed is left to expire on its TTL. See app/core/cache.py.
+    # REPORTS, not REPORTS_ARCHIVE: an order lands in the range it was placed
+    # in, so a range that has already closed cannot gain one, and the archive is
+    # left to expire on its TTL. See app/core/cache.py.
     Order: frozenset({ORDERS, REPORTS}),
     OrderItem: frozenset({ORDERS, REPORTS}),
     Payment: frozenset({ORDERS, REPORTS}),
+    # Expenses break that rule, so they clear both shelves. Typing up last
+    # Tuesday's receipt on Friday is the normal case rather than the exception,
+    # and it changes a closed month — leaving the archive to expire would mean
+    # the operator entering a figure and not seeing it for fifteen minutes, on
+    # the one screen they use to check their own data entry. The archive exists
+    # to stop a stream of checkouts discarding expensive historical reports;
+    # expense writes are a handful of manual actions a day, so clearing it costs
+    # one rebuild. Renaming a category relabels every cached breakdown, so it
+    # counts too.
+    Expense: frozenset({REPORTS, REPORTS_ARCHIVE}),
+    ExpenseCategory: frozenset({REPORTS, REPORTS_ARCHIVE}),
+    # The delivery charge is part of every cart total the storefront quotes and
+    # the currency is on every price it prints, so a settings write clears the
+    # product and category caches too rather than only its own.
+    ShopSettings: frozenset({SETTINGS, PRODUCTS, CATEGORIES}),
 }
 
 

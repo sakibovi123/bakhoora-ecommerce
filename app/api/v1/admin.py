@@ -43,6 +43,7 @@ from app.schemas.order import (
     OrderListItem,
     OrderOut,
     OrderStatusUpdate,
+    PaymentRecord,
 )
 from app.schemas.product import ProductOut
 from app.schemas.report import Granularity, SalesReport
@@ -277,6 +278,23 @@ async def update_order(
     order_id: uuid.UUID, data: OrderStatusUpdate, db: DbSession, _: OrdersManager
 ) -> Order:
     return await order_service.update_status(db, order_id, data)
+
+
+@router.post(
+    "/orders/{order_id}/payments",
+    response_model=OrderOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def record_order_payment(
+    order_id: uuid.UUID, data: PaymentRecord, db: DbSession, _: OrdersManager
+) -> Order:
+    """Take money against an order and reduce what is still owed.
+
+    This is the counterpart to an advance: the courier comes back with the
+    remaining 900 taka and the desk records it here, which closes the due and
+    flips the order to paid on its own.
+    """
+    return await order_service.record_payment(db, order_id, data)
 
 
 # --- customers -------------------------------------------------------------

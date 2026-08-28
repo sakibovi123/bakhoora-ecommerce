@@ -247,6 +247,10 @@ async def seed(db, rng: random.Random) -> None:
             )
             total = subtotal + shipping
             payment_status = _payment_state(status, method)
+            # Keep the money and the badge consistent: a seeded order marked
+            # paid must carry the cash to match, or every demo invoice would
+            # print a balance due for an order that owes nothing.
+            settled = payment_status in (PaymentStatus.PAID, PaymentStatus.REFUNDED)
 
             order = Order(
                 order_number=_order_number(orders_made + 1, moment),
@@ -259,6 +263,7 @@ async def seed(db, rng: random.Random) -> None:
                 shipping_fee=shipping,
                 discount_total=Decimal("0.00"),
                 total=total,
+                amount_paid=total if settled else Decimal("0.00"),
                 recipient_name=customer.full_name,
                 phone=phone,
                 line1=f"House {rng.randint(1, 120)}, Road {rng.randint(1, 28)}",
@@ -272,7 +277,7 @@ async def seed(db, rng: random.Random) -> None:
             order.created_at = moment
             order.updated_at = moment
 
-            if payment_status in (PaymentStatus.PAID, PaymentStatus.REFUNDED):
+            if settled:
                 order.payments = [
                     Payment(
                         provider=method,

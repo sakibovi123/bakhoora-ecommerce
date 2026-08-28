@@ -1,22 +1,26 @@
 "use client";
 
 import Link from "next/link";
+
+import { Logo } from "@/components/logo";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { IconCart, IconUser } from "@/components/admin/icons";
 import { useAuth } from "@/lib/auth";
 import { useCart } from "@/lib/cart-context";
+import { useShop } from "@/lib/shop-settings";
 
 const NAV = [
   { href: "/shop", label: "Shop" },
-  { href: "/shop?category=attar", label: "Attar" },
-  { href: "/shop?category=oud", label: "Oud" },
-  { href: "/about", label: "Story" },
+  { href: "/shop?category=decants", label: "Decants" },
+  { href: "/shop?category=oils", label: "Oils" },
+  { href: "/about", label: "How we work" },
 ];
 
 export function SiteHeader() {
   const { itemCount, open, isReady } = useCart();
+  const shop = useShop();
   const { ready, user } = useAuth();
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -38,9 +42,18 @@ export function SiteHeader() {
       }`}
     >
       <div className="shell flex h-20 items-center justify-between border-b border-line/70">
-        <Link href="/" className="flex items-baseline gap-2">
-          <span className="font-display text-2xl tracking-tight">Bakhoora</span>
-          <span className="label hidden text-muted sm:inline">Dhaka</span>
+        <Link href="/" className="flex items-center" aria-label={`${shop.siteTitle} — home`}>
+          {/* The compact cut, not the bare wordmark: the smoke and ember are
+              what make this the logo rather than the name set in a serif.
+              They are hairline, so the lockup has to stay tall enough for
+              them to survive — at h-14 the mark alone is ~43px, which clears
+              it. */}
+          {shop.logoUrl ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img src={shop.logoUrl} alt="" className="h-12 w-auto sm:h-14" />
+          ) : (
+            <Logo variant="compact" className="h-12 sm:h-14" priority alt="" />
+          )}
         </Link>
 
         <nav className="hidden items-center gap-9 md:flex" aria-label="Primary">

@@ -35,6 +35,7 @@ from app.core.config import settings
 CATEGORIES = "categories"
 PRODUCTS = "products"
 ORDERS = "orders"
+SETTINGS = "settings"
 # Sales reports get namespaces of their own rather than riding on ORDERS.
 # Sharing that one meant every checkout threw away report entries that cost
 # several aggregate scans to build, so on a shop taking orders steadily the

@@ -122,6 +122,16 @@ class Settings(BaseSettings):
     FIRST_ADMIN_EMAIL: str = "admin@bakhoora.bd"
     FIRST_ADMIN_PASSWORD: str = "Admin123!"
 
+    # --- caption assistant (OpenRouter) ---
+    # Server-side only. The key never reaches the browser: the panel talks to
+    # our own endpoint, which talks to OpenRouter, so a signed-in staff session
+    # is the only way to spend it.
+    OPENROUTER_API_KEY: str = ""
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    OPENROUTER_MODEL: str = "anthropic/claude-sonnet-5"
+    OPENROUTER_MAX_TOKENS: int = 1200
+    OPENROUTER_TIMEOUT_SECONDS: float = 60.0
+
     REPORT_TIMEZONE: str = "Asia/Dhaka"
     CACHE_TTL_REPORTS: int = 60
     # Ranges that ended before today are not invalidated by order writes, so

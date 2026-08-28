@@ -63,6 +63,10 @@ class OrderOut(BaseModel):
     shipping_fee: Decimal
     discount_total: Decimal
     total: Decimal
+    # Read off Order.amount_paid and the Order.amount_due property, so the
+    # invoice and the panel never have to do the subtraction themselves.
+    amount_paid: Decimal
+    amount_due: Decimal
     recipient_name: str
     phone: str
     line1: str
@@ -85,6 +89,8 @@ class OrderListItem(BaseModel):
     status: OrderStatus
     payment_status: PaymentStatus
     total: Decimal
+    amount_paid: Decimal
+    amount_due: Decimal
     currency: str
     created_at: datetime
 
@@ -97,6 +103,11 @@ class CheckoutResponse(BaseModel):
 class ManualOrderLine(BaseModel):
     variant_id: uuid.UUID
     quantity: int = Field(ge=1, le=999)
+    # What the shop actually agreed for this line, per unit. Left out, the
+    # variant's listed price applies. Zero is allowed — a sample thrown in with
+    # an order is a real line at no charge, and hiding it off the invoice would
+    # make the stock movement unaccountable.
+    unit_price: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
 
 
 class ManualOrderRequest(BaseModel):
@@ -118,6 +129,11 @@ class ManualOrderRequest(BaseModel):
     # Overrides for a negotiated price. Left out, the usual rules apply.
     shipping_fee: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     discount_total: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    # Money handed over when the order was taken — the customer who pays the
+    # 100tk delivery charge now and owes the other 900 on delivery. Left out or
+    # zero, the whole total is due. It cannot exceed the total: taking more
+    # than the order is worth is a data-entry slip, not a credit balance.
+    amount_paid: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     customer_note: str | None = Field(default=None, max_length=1000)
     admin_note: str | None = Field(default=None, max_length=1000)
 
@@ -139,6 +155,20 @@ class ManualOrderRequest(BaseModel):
             names = ", ".join(s.value for s in allowed)
             raise ValueError(f"A new order can only start as {names}")
         return value
+
+
+class PaymentRecord(BaseModel):
+    """Money actually received against an order.
+
+    This is what the desk fills in when the courier comes back with the rest of
+    the cash, and it is the only way an order's paid figure moves after it is
+    created — so every taka has a row behind it.
+    """
+
+    amount: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+    # Defaults to the order's own method: cash on delivery collected in cash.
+    provider: str | None = Field(default=None, max_length=40)
+    reference: str | None = Field(default=None, max_length=120)
 
 
 class OrderStatusUpdate(BaseModel):

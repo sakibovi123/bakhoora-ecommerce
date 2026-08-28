@@ -46,7 +46,7 @@ export default function LoginPage() {
         <p className="label text-muted">Account</p>
         <h1 className="display-md mt-6">Welcome back.</h1>
         <p className="mt-7 max-w-sm leading-relaxed text-muted">
-          Sign in to see past orders, saved addresses and reorder a blend in two clicks.
+          Sign in to see past orders, saved addresses and reorder in two clicks.
         </p>
       </div>
 

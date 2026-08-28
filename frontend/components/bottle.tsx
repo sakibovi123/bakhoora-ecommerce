@@ -7,7 +7,7 @@ interface BottleProps {
 
 /**
  * Product imagery is drawn, not photographed — one consistent silhouette per format,
- * tinted by the blend's own colour. No asset pipeline, no mismatched crops.
+ * tinted per product. No asset pipeline, no mismatched crops.
  */
 export function Bottle({ tone, shape = "flacon", className }: BottleProps) {
   const [light, dark] = tone;

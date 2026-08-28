@@ -12,8 +12,20 @@ import type {
   OrderStatus,
   Page,
   PaymentStatus,
+  CaptionMessage,
+  CaptionPlatform,
+  CaptionProduct,
+  CaptionReply,
+  CaptionStatus,
+  Expense,
+  ExpenseCategory,
+  ExpenseInput,
+  ExpensePage,
+  ExpenseQuery,
   Product,
   ProductInput,
+  ShopSettings,
+  ShopSettingsInput,
   RoleDetail,
   SalesReport,
   Variant,
@@ -197,8 +209,17 @@ export interface ManualOrderInput {
   payment_status?: string | null;
   shipping_fee?: string | null;
   discount_total?: string | null;
+  /** Money taken when the order was written up. The rest becomes the due. */
+  amount_paid?: string | null;
   customer_note?: string | null;
   admin_note?: string | null;
+}
+
+/** A collection against an order — the advance, or the balance on delivery. */
+export interface PaymentInput {
+  amount: string;
+  provider?: string | null;
+  reference?: string | null;
 }
 
 export interface RoleInput {
@@ -209,6 +230,71 @@ export interface RoleInput {
 }
 
 export const adminApi = {
+  // --- caption assistant ---
+  // The OpenRouter key stays on the server; these only ever talk to our API.
+  captionStatus: (token: string) => call<CaptionStatus>("/admin/captions/status", token),
+
+  captionProducts: (token: string) =>
+    call<CaptionProduct[]>("/admin/captions/products", token),
+
+  caption: (
+    token: string,
+    input: {
+      messages: CaptionMessage[];
+      platform: CaptionPlatform;
+      product_id?: string | null;
+    },
+  ) => call<CaptionReply>("/admin/captions/chat", token, { method: "POST", body: body(input) }),
+
+  // --- expenses ---
+  expenses: (token: string, params: ExpenseQuery = {}) =>
+    call<ExpensePage>(`/admin/expenses${query({ ...params })}`, token),
+
+  createExpense: (token: string, input: ExpenseInput) =>
+    call<Expense>("/admin/expenses", token, { method: "POST", body: body(input) }),
+
+  updateExpense: (token: string, id: string, input: ExpenseInput) =>
+    call<Expense>(`/admin/expenses/${id}`, token, { method: "PATCH", body: body(input) }),
+
+  deleteExpense: (token: string, id: string) =>
+    call<void>(`/admin/expenses/${id}`, token, { method: "DELETE" }),
+
+  expenseCategories: (token: string) =>
+    call<ExpenseCategory[]>("/admin/expense-categories", token),
+
+  createExpenseCategory: (token: string, input: Record<string, unknown>) =>
+    call<ExpenseCategory>("/admin/expense-categories", token, {
+      method: "POST",
+      body: body(input),
+    }),
+
+  updateExpenseCategory: (token: string, id: string, input: Record<string, unknown>) =>
+    call<ExpenseCategory>(`/admin/expense-categories/${id}`, token, {
+      method: "PATCH",
+      body: body(input),
+    }),
+
+  deleteExpenseCategory: (token: string, id: string) =>
+    call<void>(`/admin/expense-categories/${id}`, token, { method: "DELETE" }),
+
+  // --- shop settings ---
+  // The GET is public, so it takes no token — the storefront reads the same
+  // endpoint for the shop's name, currency and delivery charge.
+  settings: () => call<ShopSettings>("/settings", null),
+
+  updateSettings: (token: string, input: ShopSettingsInput) =>
+    call<ShopSettings>("/settings", token, { method: "PATCH", body: body(input) }),
+
+  uploadBranding: (token: string, asset: "logo" | "favicon", file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    // No Content-Type header: the browser has to set the multipart boundary.
+    return call<ShopSettings>(`/settings/${asset}`, token, { method: "POST", body: form });
+  },
+
+  clearBranding: (token: string, asset: "logo" | "favicon") =>
+    call<ShopSettings>(`/settings/${asset}`, token, { method: "DELETE" }),
+
   // --- auth ---
   login: (email: string, password: string) =>
     call<{ access_token: string; refresh_token: string }>("/auth/login", null, {
@@ -331,6 +417,12 @@ export const adminApi = {
 
   createOrder: (token: string, input: ManualOrderInput) =>
     call<Order>("/admin/orders", token, { method: "POST", body: body(input) }),
+
+  recordPayment: (token: string, id: string, input: PaymentInput) =>
+    call<Order>(`/admin/orders/${id}/payments`, token, {
+      method: "POST",
+      body: body(input),
+    }),
 
   // --- customers ---
   users: (token: string, params: UserQuery = {}) =>

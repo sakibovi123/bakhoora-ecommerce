@@ -5,74 +5,88 @@ import { Marquee } from "@/components/marquee";
 import { Reveal } from "@/components/reveal";
 import { SectionLabel } from "@/components/section-label";
 import { ButtonLink } from "@/components/ui";
-import { getProduct } from "@/lib/catalog";
+import { toneFor } from "@/lib/catalog";
 
 export const metadata: Metadata = {
-  title: "Story",
-  description: "How Bakhoora blends, ages and bottles perfume in Dhaka.",
+  title: "How we work",
+  description: "How Bakhoora imports, decants and bottles perfume in Dhaka.",
 };
 
 const STEPS = [
   {
     index: "01",
-    title: "Sourcing",
-    body: "Agarwood comes from two suppliers we have used since 2021 — one in Assam, one in Pursat. Every consignment is distilled to sample before we buy the lot.",
+    title: "Buying",
+    body: "Full retail bottles, imported, and perfume oil bought by the bottle from the market. We buy to decant — never decanted stock bought on from someone else.",
   },
   {
     index: "02",
-    title: "Blending",
-    body: "Formulas are written in grams, not drops, and logged. A blend that cannot be repeated is not a product, it is an accident.",
+    title: "Checking",
+    body: "Every bottle is opened, smelled and logged against the last one we bought of it. If a batch does not smell like the batch before it, it does not get poured.",
   },
   {
     index: "03",
-    title: "Ageing",
-    body: "Minimum eighteen months in glass, in the dark. Oud is harsh and medicinal when young; time is the only fix.",
+    title: "Pouring",
+    body: "Hand-filled into new glass, one fragrance at a time, with a fresh pipette for each so nothing carries over. Poured the day it ships, not months ahead.",
   },
   {
     index: "04",
-    title: "Bottling",
-    body: "Filled and labelled by hand in Dhanmondi, in batches of two hundred. Batch number is printed on the base of every bottle.",
+    title: "Labelling",
+    body: "Fragrance name and size on every vial, and the source bottle recorded against the batch — so if you ask what yours came out of, we can tell you.",
   },
 ];
 
 export default function AboutPage() {
-  const hero = getProduct("cambodi-oud")!;
-
   return (
     <>
       <section className="shell grid gap-14 pb-20 pt-14 md:pt-20 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
         <div>
           <Reveal>
-            <SectionLabel>Since 2019 · Dhanmondi, Dhaka</SectionLabel>
+            <SectionLabel>Dhanmondi, Dhaka</SectionLabel>
           </Reveal>
           <Reveal delay={80}>
             <h1 className="display-lg mt-8">
-              We sell time,
+              We do not make it.
               <br />
-              <span className="italic text-accent">in a bottle</span>.
+              <span className="italic text-accent">We split it</span>.
             </h1>
           </Reveal>
           <Reveal delay={160}>
             <p className="mt-9 max-w-lg text-lg leading-relaxed text-muted">
-              Bakhoora started as one shelf of attar in a family shop. Seven years later it is
-              still one room, one blender, and a rule we have never broken: nothing ships before
-              it is ready.
+              Bakhoora is a decanter. We buy the bottle, then pour it into sizes people can
+              actually finish — and we buy perfume oil the same way, by the bottle, and pour that
+              too. What is in your vial is what was in the bottle. That is the whole business.
             </p>
           </Reveal>
         </div>
 
         <Reveal delay={120}>
-          <div className="bg-paper-2">
-            <Bottle tone={hero.tone} className="aspect-[4/5] w-full" />
+          {/* The transfer, drawn: the bottle that comes in, and the vial that
+              goes out. Says what a decant is faster than the paragraph does. */}
+          <div className="grid grid-cols-2 gap-px bg-line">
+            {[
+              { label: "What we buy", shape: "flacon" as const },
+              { label: "What you get", shape: "vial" as const },
+            ].map((item) => (
+              <div key={item.label} className="bg-paper-2 p-4">
+                <Bottle
+                  tone={toneFor(item.label)}
+                  shape={item.shape}
+                  className="aspect-[4/5] w-full"
+                />
+                <p className="label mt-2 text-center text-muted">{item.label}</p>
+              </div>
+            ))}
           </div>
         </Reveal>
       </section>
 
-      <Marquee items={["Small batch", "Hand filled", "Batch numbered", "Aged 18 months minimum"]} />
+      <Marquee
+        items={["Poured to order", "Hand filled", "Fresh glass", "6 · 10 · 15 · 30 ml"]}
+      />
 
       <section className="shell py-24 md:py-32">
         <Reveal>
-          <SectionLabel index="01">How it is made</SectionLabel>
+          <SectionLabel index="01">How it is done</SectionLabel>
         </Reveal>
         <div className="mt-14 grid gap-px border border-line bg-line sm:grid-cols-2">
           {STEPS.map((step, index) => (
@@ -96,15 +110,16 @@ export default function AboutPage() {
           </Reveal>
           <Reveal delay={80}>
             <h2 className="display-md mt-9 max-w-3xl text-paper">
-              Call a synthetic accord &ldquo;pure oud&rdquo;. Rush a batch for Eid. Sell a tester
-              as new.
+              Dilute a decant. Call ourselves an official stockist. Pour from a bottle we cannot
+              account for.
             </h2>
           </Reveal>
           <Reveal delay={140}>
             <p className="mt-9 max-w-xl leading-relaxed text-paper/60">
-              If a blend is built on an accord rather than distilled oil, the product page says so.
-              It costs us a few sales a month and it is the only reason anyone trusts the rest of
-              the list.
+              We are independent. We are not an authorised dealer for any house, we are not
+              affiliated with the brands whose bottles we split, and we do not pretend the vial is
+              the boxed original. You are buying the fragrance, poured honestly, at a size that
+              makes sense — and nothing more than that.
             </p>
           </Reveal>
         </div>
@@ -117,7 +132,7 @@ export default function AboutPage() {
             The studio is open Saturday to Thursday, 10:00 to 20:00. Dhanmondi 27, Dhaka 1209.
           </p>
           <div className="mt-10 flex justify-center">
-            <ButtonLink href="/shop">Shop the collection</ButtonLink>
+            <ButtonLink href="/shop">Shop the range</ButtonLink>
           </div>
         </Reveal>
       </section>

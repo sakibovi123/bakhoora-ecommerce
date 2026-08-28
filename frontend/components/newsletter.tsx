@@ -20,7 +20,7 @@ export function Newsletter() {
         <h2 className="display-md mt-5 text-paper">
           One letter a month.
           <br />
-          New blends first.
+          New arrivals first.
         </h2>
       </div>
 

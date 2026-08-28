@@ -10,7 +10,9 @@ from app.core.config import settings
 from app.core.exceptions import NotFoundError, OutOfStockError
 from app.models.cart import Cart, CartItem
 from app.models.product import Product, ProductVariant
+from app.models.settings import ShopSettings
 from app.schemas.cart import CartItemAdd, CartItemOut, CartItemUpdate, CartOut
+from app.services import settings_service
 
 _LOAD_ITEM = (
     selectinload(CartItem.variant)
@@ -19,10 +21,13 @@ _LOAD_ITEM = (
 )
 
 
-def calculate_shipping(subtotal: Decimal) -> Decimal:
-    if subtotal <= 0 or subtotal >= settings.FREE_SHIPPING_THRESHOLD:
-        return Decimal("0.00")
-    return Decimal(settings.SHIPPING_FLAT_FEE).quantize(Decimal("0.01"))
+def calculate_shipping(subtotal: Decimal, shop: ShopSettings) -> Decimal:
+    """Delivery on a basket of this size, per the shop's own settings.
+
+    Takes the settings row rather than reading it, so the one caller that
+    already has it open does not fetch it twice inside a single checkout.
+    """
+    return shop.delivery_for(subtotal)
 
 
 async def get_or_create_cart(db: AsyncSession, user_id: uuid.UUID) -> Cart:
@@ -52,7 +57,7 @@ def primary_image(product: Product) -> str | None:
     return image.url
 
 
-def serialize_cart(cart: Cart, items: list[CartItem]) -> CartOut:
+def serialize_cart(cart: Cart, items: list[CartItem], shop: ShopSettings) -> CartOut:
     rows: list[CartItemOut] = []
     subtotal = Decimal("0.00")
 
@@ -83,7 +88,7 @@ def serialize_cart(cart: Cart, items: list[CartItem]) -> CartOut:
             )
         )
 
-    shipping = calculate_shipping(subtotal)
+    shipping = calculate_shipping(subtotal, shop)
     return CartOut(
         id=cart.id,
         items=rows,
@@ -91,13 +96,13 @@ def serialize_cart(cart: Cart, items: list[CartItem]) -> CartOut:
         subtotal=subtotal,
         shipping_fee=shipping,
         total=subtotal + shipping,
-        currency=settings.CURRENCY,
+        currency=shop.currency_code,
     )
 
 
 async def get_cart(db: AsyncSession, user_id: uuid.UUID) -> CartOut:
     cart = await get_or_create_cart(db, user_id)
-    return serialize_cart(cart, await load_items(db, cart.id))
+    return serialize_cart(cart, await load_items(db, cart.id), await settings_service.get(db))
 
 
 async def add_item(db: AsyncSession, user_id: uuid.UUID, data: CartItemAdd) -> CartOut:
@@ -125,7 +130,7 @@ async def add_item(db: AsyncSession, user_id: uuid.UUID, data: CartItemAdd) -> C
     else:
         item.quantity = wanted
     await db.commit()
-    return serialize_cart(cart, await load_items(db, cart.id))
+    return serialize_cart(cart, await load_items(db, cart.id), await settings_service.get(db))
 
 
 async def _get_item(db: AsyncSession, cart_id: uuid.UUID, item_id: uuid.UUID) -> CartItem:
@@ -148,7 +153,7 @@ async def update_item(
         raise OutOfStockError(f"Only {item.variant.stock_quantity} left in stock")
     item.quantity = data.quantity
     await db.commit()
-    return serialize_cart(cart, await load_items(db, cart.id))
+    return serialize_cart(cart, await load_items(db, cart.id), await settings_service.get(db))
 
 
 async def remove_item(db: AsyncSession, user_id: uuid.UUID, item_id: uuid.UUID) -> CartOut:
@@ -156,11 +161,11 @@ async def remove_item(db: AsyncSession, user_id: uuid.UUID, item_id: uuid.UUID) 
     item = await _get_item(db, cart.id, item_id)
     await db.delete(item)
     await db.commit()
-    return serialize_cart(cart, await load_items(db, cart.id))
+    return serialize_cart(cart, await load_items(db, cart.id), await settings_service.get(db))
 
 
 async def clear_cart(db: AsyncSession, user_id: uuid.UUID) -> CartOut:
     cart = await get_or_create_cart(db, user_id)
     await db.execute(sql_delete(CartItem).where(CartItem.cart_id == cart.id))
     await db.commit()
-    return serialize_cart(cart, [])
+    return serialize_cart(cart, [], await settings_service.get(db))

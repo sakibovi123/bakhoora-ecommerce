@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback } from "react";
 
 import { IconChevronLeft } from "@/components/admin/icons";
+import { Logo } from "@/components/logo";
 import { Require } from "@/components/admin/require";
 import { Button, ErrorNote, Spinner } from "@/components/admin/ui";
 import { adminApi } from "@/lib/admin/client";
@@ -14,7 +15,7 @@ import { useResource } from "@/lib/admin/use-resource";
 /** Edit these to whatever belongs on the shop's paperwork. */
 const SHOP = {
   name: "Bakhoora",
-  tagline: "Attar, oud and eau de parfum",
+  tagline: "Perfume decants and oils",
   address: ["Dhaka, Bangladesh"],
   contact: "hello@bakhoora.bd",
 };
@@ -37,6 +38,8 @@ function InvoiceScreen() {
   if (!order) return null;
 
   const discount = Number.parseFloat(order.discount_total) > 0;
+  const paid = Number.parseFloat(order.amount_paid);
+  const due = Number.parseFloat(order.amount_due);
 
   return (
     <div className="space-y-5">
@@ -54,10 +57,12 @@ function InvoiceScreen() {
       <article className="invoice-sheet mx-auto w-full max-w-[210mm] border border-line bg-paper p-8 sm:p-12">
         <header className="flex flex-wrap items-start justify-between gap-6 border-b border-ink pb-6">
           <div>
-            <p className="font-[family-name:var(--font-display)] text-3xl leading-none">
-              {SHOP.name}
-            </p>
-            <p className="mt-1 text-sm text-muted">{SHOP.tagline}</p>
+            {/* unoptimized: the print path renders straight from the file, and
+                a Next-optimised URL can still be mid-fetch when the print
+                dialog snapshots the page — leaving a logo-shaped hole on the
+                sheet the customer actually receives. */}
+            <Logo variant="compact" className="h-16" unoptimized alt={SHOP.name} />
+            <p className="mt-2 text-sm text-muted">{SHOP.tagline}</p>
             <address className="mt-3 text-sm not-italic leading-relaxed text-muted">
               {SHOP.address.map((line) => (
                 <span key={line} className="block">
@@ -157,8 +162,47 @@ function InvoiceScreen() {
               <dt>Total</dt>
               <dd>{moneyExact(order.total)}</dd>
             </div>
+            {/* Only shown once money has actually moved: a fully unpaid
+                cash-on-delivery slip reads as it always did, with the total as
+                the amount to collect. */}
+            {paid > 0 ? (
+              <div className="flex justify-between text-muted">
+                <dt>Paid</dt>
+                <dd className="text-ink">−{moneyExact(order.amount_paid)}</dd>
+              </div>
+            ) : null}
+            {paid > 0 || due > 0 ? (
+              <div className="flex justify-between border-t border-ink pt-2 text-base font-semibold text-ink">
+                <dt>{due > 0 ? "Balance due" : "Balance"}</dt>
+                <dd>{moneyExact(order.amount_due)}</dd>
+              </div>
+            ) : null}
           </dl>
         </div>
+
+        {/* The line the customer and the courier both need to see without
+            reading the table: how much cash changes hands on the doorstep. */}
+        {due > 0 ? (
+          <div className="mt-6 border border-ink px-4 py-3">
+            <p className="label text-muted">To collect on delivery</p>
+            <p className="mt-1 text-2xl font-semibold text-ink [font-variant-numeric:tabular-nums]">
+              {moneyExact(order.amount_due)}
+            </p>
+            {paid > 0 ? (
+              <p className="mt-1 text-xs leading-relaxed text-muted">
+                {moneyExact(order.amount_paid)} of {moneyExact(order.total)} was paid in
+                advance on {shortDate(order.created_at)}.
+              </p>
+            ) : null}
+          </div>
+        ) : (
+          <div className="mt-6 border border-line px-4 py-3">
+            <p className="label text-muted">Paid in full</p>
+            <p className="mt-1 text-sm text-ink">
+              {moneyExact(order.amount_paid)} received. Nothing further is owed.
+            </p>
+          </div>
+        )}
 
         {order.customer_note ? (
           <section className="mt-8 border-t border-line pt-4">

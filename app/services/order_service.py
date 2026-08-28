@@ -16,14 +16,25 @@ from app.core.exceptions import (
     PermissionDeniedError,
 )
 from app.models.cart import CartItem
-from app.models.order import Order, OrderItem, OrderStatus, PaymentStatus
+from app.models.order import (
+    TERMINAL_PAYMENT_STATUSES,
+    Order,
+    OrderItem,
+    OrderStatus,
+    PaymentStatus,
+)
 from app.models.payment import Payment
 from app.models.product import Product, ProductVariant
 from app.models.user import User
 from app.payments import get_provider
 from app.payments.base import PaymentIntent
-from app.schemas.order import CheckoutRequest, ManualOrderRequest, OrderStatusUpdate
-from app.services import cart_service, user_service
+from app.schemas.order import (
+    CheckoutRequest,
+    ManualOrderRequest,
+    OrderStatusUpdate,
+    PaymentRecord,
+)
+from app.services import cart_service, settings_service, user_service
 
 RESTOCKING_STATUSES = {OrderStatus.CANCELLED, OrderStatus.REFUNDED}
 
@@ -117,18 +128,23 @@ async def checkout(
             )
         )
 
-    shipping_fee = cart_service.calculate_shipping(subtotal)
+    shop = await settings_service.get(db)
+    shipping_fee = cart_service.calculate_shipping(subtotal, shop)
+    total = subtotal + shipping_fee
     order = Order(
         order_number=_order_number(),
         user_id=user.id,
         status=OrderStatus.PENDING,
         payment_status=PaymentStatus.UNPAID,
         payment_method=provider.name,
-        currency=settings.CURRENCY,
+        currency=shop.currency_code,
         subtotal=subtotal,
         shipping_fee=shipping_fee,
         discount_total=Decimal("0.00"),
-        total=subtotal + shipping_fee,
+        total=total,
+        # Snapshotted here so the instruction the customer is given and the
+        # figure the shop chases later can never drift apart.
+        advance_required=shop.advance_for(total, shipping_fee),
         customer_note=data.customer_note,
         items=order_items,
         **address,
@@ -200,7 +216,11 @@ async def create_manual(db: AsyncSession, data: ManualOrderRequest) -> Order:
                 f"{variant.product.name} ({variant.name})"
             )
         variant.stock_quantity -= line.quantity
-        line_total = variant.price * line.quantity
+        # A phone order is often haggled. The listed price is the default, not
+        # the rule — but whatever is charged is snapshotted onto the line, so
+        # the invoice and every report agree with what was actually agreed.
+        unit_price = line.unit_price if line.unit_price is not None else variant.price
+        line_total = unit_price * line.quantity
         subtotal += line_total
         order_items.append(
             OrderItem(
@@ -209,20 +229,28 @@ async def create_manual(db: AsyncSession, data: ManualOrderRequest) -> Order:
                 variant_name=variant.name,
                 sku=variant.sku,
                 image_url=cart_service.primary_image(variant.product),
-                unit_price=variant.price,
+                unit_price=unit_price,
                 quantity=line.quantity,
                 line_total=line_total,
             )
         )
 
+    shop = await settings_service.get(db)
     shipping_fee = (
         data.shipping_fee
         if data.shipping_fee is not None
-        else cart_service.calculate_shipping(subtotal)
+        else cart_service.calculate_shipping(subtotal, shop)
     )
     discount = data.discount_total or Decimal("0.00")
     if discount > subtotal + shipping_fee:
         raise BusinessRuleError("The discount is larger than the order")
+
+    total = subtotal + shipping_fee - discount
+    paid = data.amount_paid or Decimal("0.00")
+    if paid > total:
+        raise BusinessRuleError(
+            f"Paid {paid} is more than the order total of {total}"
+        )
 
     address = data.shipping_address.model_dump()
     address.pop("label", None)
@@ -234,11 +262,16 @@ async def create_manual(db: AsyncSession, data: ManualOrderRequest) -> Order:
         status=data.status or OrderStatus.PENDING,
         payment_status=PaymentStatus.UNPAID,
         payment_method=provider.name,
-        currency=settings.CURRENCY,
+        currency=shop.currency_code,
         subtotal=subtotal,
         shipping_fee=shipping_fee,
         discount_total=discount,
-        total=subtotal + shipping_fee - discount,
+        total=total,
+        amount_paid=paid,
+        # An order the shop keyed in by hand has already been agreed on the
+        # phone, so it records what was actually taken rather than imposing the
+        # storefront's advance rule after the fact.
+        advance_required=Decimal("0.00"),
         customer_note=data.customer_note,
         admin_note=data.admin_note,
         items=order_items,
@@ -249,6 +282,24 @@ async def create_manual(db: AsyncSession, data: ManualOrderRequest) -> Order:
 
     intent = await provider.create_payment(order)
     order.payment_status = data.payment_status or intent.status
+
+    # `payment_status: "paid"` with no figure is the desk saying "settled in
+    # full" — honour it by moving the money, so the badge and the arithmetic
+    # cannot tell different stories.
+    if data.payment_status is PaymentStatus.PAID and data.amount_paid is None:
+        order.amount_paid = order.total
+    order.payment_status = order.derive_payment_status()
+
+    # The provider's instruction, at the provider's own status — not the
+    # order's. Stamping the order's status here is what would make a prepaid
+    # order show an intent for the full total marked "paid" *and* a receipt for
+    # the same money, reading as twice the takings in the payments ledger.
+    # db.add with an explicit order_id here, rather than appending to
+    # `order.payments` the way record_payment does. The order has just been
+    # flushed and its payments collection was never loaded, so touching it
+    # would fire a lazy load from async context and raise MissingGreenlet.
+    # Nothing reads the collection before the reload, so a plain insert is
+    # both safe and enough.
     db.add(
         Payment(
             order_id=order.id,
@@ -256,10 +307,23 @@ async def create_manual(db: AsyncSession, data: ManualOrderRequest) -> Order:
             reference=intent.reference,
             amount=order.total,
             currency=order.currency,
-            status=order.payment_status,
+            status=intent.status,
             raw_response=intent.raw_response,
         )
     )
+    if order.amount_paid > 0:
+        # A receipt of its own, so the advance is a line in the ledger rather
+        # than an unexplained number on the order.
+        db.add(
+            Payment(
+                order_id=order.id,
+                provider=provider.name,
+                reference="Advance taken with the order",
+                amount=order.amount_paid,
+                currency=order.currency,
+                status=PaymentStatus.PAID,
+            )
+        )
 
     await db.commit()
     return await get_order(db, order.id)
@@ -338,9 +402,80 @@ async def update_status(
         order.status = data.status
 
     if data.payment_status is not None:
-        order.payment_status = data.payment_status
+        _apply_payment_status(order, data.payment_status)
     if data.admin_note is not None:
         order.admin_note = data.admin_note
+
+    await db.commit()
+    return await get_order(db, order_id)
+
+
+def _apply_payment_status(order: Order, wanted: PaymentStatus) -> None:
+    """Move the money to match a payment status the desk picked by hand.
+
+    Without this the dropdown and the arithmetic drift apart: marking a
+    900-taka-due order "paid" would leave 900 outstanding on the invoice
+    forever. Settling in full is the common case and stays one click.
+    """
+    if wanted is PaymentStatus.PARTIAL:
+        # "Partly paid" is not a thing you can assert — it is a consequence of
+        # how much came in. Naming a figure is the only way to say it.
+        raise BusinessRuleError(
+            "Record a payment for the amount received instead of setting partial by hand"
+        )
+    if wanted is PaymentStatus.PAID:
+        order.amount_paid = order.total
+    elif wanted in {PaymentStatus.UNPAID, PaymentStatus.PENDING}:
+        # Winding an order back to unpaid means the money never arrived.
+        order.amount_paid = Decimal("0.00")
+
+    order.payment_status = wanted
+    if wanted not in TERMINAL_PAYMENT_STATUSES:
+        order.payment_status = order.derive_payment_status()
+
+
+async def record_payment(
+    db: AsyncSession, order_id: uuid.UUID, data: PaymentRecord
+) -> Order:
+    """Take money against an order: the advance, or the rest on delivery.
+
+    Locks the row for the read-modify-write. Two staff settling the same due
+    from two tills would otherwise both read 900 outstanding and both add their
+    collection to the same starting figure, and the order would end up showing
+    money the shop never took.
+    """
+    order = await db.get(Order, order_id, with_for_update=True)
+    if order is None:
+        raise NotFoundError("Order not found")
+
+    if order.status is OrderStatus.CANCELLED:
+        raise BusinessRuleError("A cancelled order cannot take a payment")
+    if order.payment_status in TERMINAL_PAYMENT_STATUSES:
+        raise BusinessRuleError(
+            f"This order is marked {order.payment_status.value}; "
+            "reset the payment status before taking more money"
+        )
+    if data.amount > order.amount_due:
+        raise BusinessRuleError(
+            f"That is more than the {order.amount_due} still owed on this order"
+        )
+
+    order.amount_paid += data.amount
+    order.payment_status = order.derive_payment_status()
+    # Appended to the relationship rather than db.add()'d on its own: the
+    # session runs expire_on_commit=False, so the Order in the identity map
+    # keeps whatever `payments` it loaded a moment ago. A bare add writes the
+    # row but leaves that collection stale, and the reload hands back the same
+    # object — the receipt lands in the table and never reaches the screen.
+    order.payments.append(
+        Payment(
+            provider=data.provider or order.payment_method,
+            reference=data.reference,
+            amount=data.amount,
+            currency=order.currency,
+            status=PaymentStatus.PAID,
+        )
+    )
 
     await db.commit()
     return await get_order(db, order_id)

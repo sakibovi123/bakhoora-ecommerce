@@ -83,6 +83,10 @@ CustomersViewer = menu_guard("customers")
 CustomersManager = menu_guard("customers", MANAGE)
 RolesViewer = menu_guard("roles")
 RolesManager = menu_guard("roles", MANAGE)
+ExpensesViewer = menu_guard("expenses")
+ExpensesManager = menu_guard("expenses", MANAGE)
+SettingsViewer = menu_guard("settings")
+SettingsManager = menu_guard("settings", MANAGE)
 
 
 class Pagination:

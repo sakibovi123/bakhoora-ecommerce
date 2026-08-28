@@ -14,6 +14,8 @@ import {
   MENU_ICONS,
 } from "@/components/admin/icons";
 import { MENU_TONE, TONE_TEXT } from "@/components/admin/tone";
+import { CaptionBot } from "@/components/admin/caption-bot";
+import { Logo } from "@/components/logo";
 import { apiConfigured } from "@/lib/admin/client";
 import { useAuth } from "@/lib/auth";
 import type { MenuKey } from "@/lib/admin/types";
@@ -26,6 +28,8 @@ const NAV: { href: string; label: string; menu: MenuKey; exact?: boolean }[] = [
   { href: "/admin/categories", label: "Categories", menu: "categories" },
   { href: "/admin/customers", label: "Customers", menu: "customers" },
   { href: "/admin/roles", label: "Roles & access", menu: "roles" },
+  { href: "/admin/expenses", label: "Expenses", menu: "expenses" },
+  { href: "/admin/settings", label: "Settings", menu: "settings" },
 ];
 
 function isCurrent(pathname: string, href: string, exact?: boolean) {
@@ -86,8 +90,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
     <div className="min-h-dvh bg-paper lg:grid lg:grid-cols-[15rem_1fr]">
       {/* Sticky on a phone: the only way back to the menu is this bar. */}
       <div className="sticky top-0 z-40 flex items-center justify-between border-b border-ink-2 bg-ink px-4 py-3 lg:hidden">
-        <Link href="/admin" className="label text-paper">
-          Bakhoora Admin
+        <Link href="/admin" className="flex items-center" aria-label="Bakhoora admin">
+          <Logo variant="horizontal" className="h-8" alt="" />
         </Link>
         <button
           type="button"
@@ -120,13 +124,12 @@ export function AdminShell({ children }: { children: ReactNode }) {
         <div className="flex h-full flex-col">
           <div className="flex items-start justify-between px-6 py-6">
             <div>
-              <Link
-                href="/admin"
-                className="font-[family-name:var(--font-display)] text-2xl text-paper"
-              >
-                Bakhoora
+              <Link href="/admin" className="block" aria-label="Bakhoora admin — dashboard">
+                {/* The compact cut: the tagline is marketing and has no place
+                    on a back-office rail, but the smoke and ember do the
+                    recognising at this size. */}
+                <Logo variant="horizontal" className="h-12" priority alt="" />
               </Link>
-              <p className="label mt-1 text-paper/45">Admin</p>
             </div>
             <button
               type="button"
@@ -204,6 +207,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
       </aside>
 
       <main className="min-w-0 px-4 py-6 sm:px-5 md:px-8 md:py-9">{children}</main>
+
+      {/* Floats over every admin page. Renders nothing at all unless the
+          server says OPENROUTER_API_KEY is set. */}
+      <CaptionBot />
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 
 import { Button, Field, Input } from "@/components/admin/ui";
+import { Logo } from "@/components/logo";
 import {
   IconAlert,
   IconExternal,
@@ -98,9 +99,12 @@ export default function AdminLoginPage() {
   return (
     <div className="grid min-h-dvh place-items-center bg-paper-2 px-5 py-16">
       <form onSubmit={onSubmit} className="w-full max-w-sm border border-line bg-paper p-8">
-        <p className="label flex items-center gap-2 text-muted">
+        {/* The sign-in card is the one admin screen with room for the full
+            lockup, and it is the first thing staff see each morning. */}
+        <Logo variant="primary" className="h-24" priority alt="Bakhoora" />
+        <p className="label mt-6 flex items-center gap-2 text-muted">
           <IconLock />
-          Bakhoora
+          Staff area
         </p>
         <h1 className="mt-3 font-[family-name:var(--font-display)] text-3xl leading-none">
           Admin sign in

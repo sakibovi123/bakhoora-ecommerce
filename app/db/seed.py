@@ -7,95 +7,74 @@ from app.core.config import settings
 from app.core.security import hash_password
 from app.db.session import AsyncSessionLocal, engine
 from app.models.category import Category
-from app.models.product import Product, ProductImage, ProductVariant
+from app.models.expense import ExpenseCategory
+from app.models.product import Product, ProductVariant
 from app.models.role import Role, RolePermission
 from app.models.user import User
 from app.utils.menus import ADMIN_ROLE_SLUG, CUSTOMER_ROLE_SLUG, MENUS
 from app.utils.sizes import DEFAULT_VARIANT_SIZES_ML, size_label
 
 CATEGORIES = [
-    ("Attar", "attar", "Alcohol-free concentrated oils"),
-    ("Oud", "oud", "Deep, resinous agarwood blends"),
-    ("Eau de Parfum", "eau-de-parfum", "Long lasting sprays"),
-    ("Body Mist", "body-mist", "Light everyday freshness"),
+    ("Decants", "decants", "Poured from imported bottles into smaller glass"),
+    ("Perfume Oil", "oils", "Alcohol-free oil, poured to order"),
 ]
 
-# Every product carries the four standard sizes, each at its own price. A couple
-# of them also carry a larger bottle, which is what "added later" looks like.
-# (size_ml, price, stock) — sizes must cover DEFAULT_VARIANT_SIZES_ML.
+# A starting set so the Expenses page opens on something usable rather than an
+# empty picker. All renameable, and the shop adds its own.
+EXPENSE_CATEGORIES = [
+    ("Stock purchase", "stock-purchase", "Oils and bottles bought to decant"),
+    ("Packaging", "packaging", "Vials, labels, stickers, boxes"),
+    ("Equipment", "equipment", "Pipettes, scales, furniture"),
+    ("Rent & bills", "rent-and-bills", "The studio and what it costs to run"),
+    ("Transport", "transport", "Courier charges, trips to the market"),
+    ("Marketing", "marketing", "Ads, photography, samples given away"),
+    ("Other", "other", "Anything that fits nowhere else"),
+]
+
+# The four standard sizes carry one price list across the whole oil range —
+# these are bought by the bottle and split, so what changes between products is
+# the fragrance, not the cost of the millilitre.
+OIL_PRICES = [(6, "300.00"), (10, "550.00"), (15, "700.00"), (30, "990.00")]
+
+# Placeholder. Stock on a decanted oil is really "how much is left in the bulk
+# bottle", which only the shop can know — set the real figures in the admin.
+DEFAULT_STOCK = 20
+
+# Named as they are written on the bulk bottles. Bakhoora is an independent
+# decanter and not a dealer for any of these houses; the storefront says so on
+# every product page.
+OILS = [
+    ("YSL", "Yves Saint Laurent", "YSL", "Bright, spicy and clean-edged."),
+    ("Dior Sauvage", "Dior", "DIOR-SAUV", "Bergamot and cracked pepper over ambroxan."),
+    ("Bleu de Chanel", "Chanel", "CHNL-BLEU", "Citrus opening, dry incense and cedar underneath."),
+    (
+        "Stronger With You",
+        "Giorgio Armani",
+        "ARM-SWY",
+        "Cardamom and chestnut turning sweet on vanilla.",
+    ),
+    ("Nautica Voyage", "Nautica", "NAUT-VOY", "Crisp green apple and water over cedar."),
+    ("Creed Aventus", "Creed", "CREED-AVE", "Smoky pineapple and birch on a musk base."),
+    ("Tom Ford Oud Wood", "Tom Ford", "TF-OUDW", "Smooth oud with cardamom and sandalwood."),
+    ("Versace Eros", "Versace", "VERS-EROS", "Mint and green apple over tonka and vanilla."),
+    ("Musk Amber", None, "MUSK-AMB", "Warm amber wrapped in soft musk."),
+    ("Lattafa Yara", "Lattafa", "LTF-YARA", "Tropical fruit and orchid, sweet and creamy."),
+    ("White Musk", None, "WHT-MUSK", "Clean, powdery musk. Quiet and close to the skin."),
+    ("Tom Ford Vanilla", "Tom Ford", "TF-VAN", "Dense vanilla, rounded and a little smoky."),
+    ("Hawas Ice", "Rasasi", "RAS-HAWI", "Cool aquatic citrus with a fresh, sharp finish."),
+]
+
 PRODUCTS = [
     {
-        "name": "Royal Oud Intense",
-        "brand": "Bakhoora",
-        "category": "oud",
-        "sku_prefix": "OUD-RI",
-        "short_description": "Smoky agarwood with saffron and rose.",
-        "featured": True,
-        "variants": [
-            (6, "1450.00", 40),
-            (10, "2200.00", 30),
-            (15, "3050.00", 22),
-            (30, "5600.00", 12),
-        ],
-    },
-    {
-        "name": "Musk Al Haramain",
-        "brand": "Bakhoora",
-        "category": "attar",
-        "sku_prefix": "ATR-MH",
-        "short_description": "Soft white musk, clean and powdery.",
-        "featured": True,
-        "variants": [
-            (6, "890.00", 60),
-            (10, "1350.00", 45),
-            (15, "1850.00", 30),
-            (30, "3300.00", 18),
-        ],
-    },
-    {
-        "name": "Amber Nights",
-        "brand": "Bakhoora",
-        "category": "eau-de-parfum",
-        "sku_prefix": "EDP-AN",
-        "short_description": "Warm amber, vanilla and tonka.",
-        "featured": False,
-        "variants": [
-            (6, "1100.00", 35),
-            (10, "1650.00", 28),
-            (15, "2300.00", 20),
-            (30, "4100.00", 14),
-            (50, "6200.00", 8),
-        ],
-    },
-    {
-        "name": "Rose Taifi",
-        "brand": "Bakhoora",
-        "category": "attar",
-        "sku_prefix": "ATR-RT",
-        "short_description": "Fresh Taif rose over sandalwood.",
-        "featured": True,
-        "variants": [
-            (6, "1250.00", 35),
-            (10, "1900.00", 26),
-            (15, "2600.00", 18),
-            (30, "4700.00", 10),
-        ],
-    },
-    {
-        "name": "Ocean Breeze Mist",
-        "brand": "Bakhoora",
-        "category": "body-mist",
-        "sku_prefix": "MST-OB",
-        "short_description": "Citrus and marine notes for daily wear.",
-        "featured": False,
-        "variants": [
-            (6, "120.00", 90),
-            (10, "180.00", 75),
-            (15, "250.00", 60),
-            (30, "420.00", 40),
-            (250, "750.00", 80),
-        ],
-    },
+        "name": name,
+        "brand": brand,
+        "category": "oils",
+        "sku_prefix": sku_prefix,
+        "short_description": blurb,
+        "featured": index < 6,
+        "variants": [(size, price, DEFAULT_STOCK) for size, price in OIL_PRICES],
+    }
+    for index, (name, brand, sku_prefix, blurb) in enumerate(OILS)
 ]
 
 # A seed row that quietly skipped a standard size would contradict the rule the
@@ -171,6 +150,19 @@ async def seed() -> None:
                 await db.flush()
             categories[slug] = category
 
+        # --- expense categories ---
+        for position, (name, slug, description) in enumerate(EXPENSE_CATEGORIES):
+            if await db.scalar(
+                select(ExpenseCategory).where(ExpenseCategory.slug == slug)
+            ):
+                continue
+            db.add(
+                ExpenseCategory(
+                    name=name, slug=slug, description=description, position=position
+                )
+            )
+            print(f"created expense category {name}")
+
         # --- products ---
         for spec in PRODUCTS:
             slug = spec["name"].lower().replace(" ", "-")
@@ -181,7 +173,11 @@ async def seed() -> None:
                 slug=slug,
                 brand=spec["brand"],
                 short_description=spec["short_description"],
-                description=f"{spec['short_description']} Bottled in Bangladesh by Bakhoora.",
+                description=(
+                    f"{spec['short_description']} Perfume oil, poured to order into fresh "
+                    f"glass at 6, 10, 15 or 30ml. Alcohol-free, so it sits close to the skin "
+                    f"and lasts longer than a spray."
+                ),
                 is_featured=spec["featured"],
                 category_id=categories[spec["category"]].id,
             )
@@ -195,13 +191,10 @@ async def seed() -> None:
                 )
                 for size_ml, price, stock in spec["variants"]
             ]
-            product.images = [
-                ProductImage(
-                    url=f"https://placehold.co/800x800?text={slug}",
-                    alt_text=spec["name"],
-                    is_primary=True,
-                )
-            ]
+            # No placeholder image on purpose: with no image the storefront
+            # draws its own bottle silhouette, which looks like a shop. A
+            # placehold.co box looks like a shop that is broken. Add real
+            # photographs through the admin and they take over automatically.
             db.add(product)
             print(f"created product {spec['name']}")
 

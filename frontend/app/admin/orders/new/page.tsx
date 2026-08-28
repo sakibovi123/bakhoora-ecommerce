@@ -40,6 +40,8 @@ interface Line {
   size: string;
   sku: string;
   price: string;
+  /** The variant's listed price, kept so an override can be spotted and undone. */
+  listPrice: string;
   stock: number;
   quantity: number;
 }
@@ -76,6 +78,7 @@ function NewOrderScreen() {
   const [paymentStatus, setPaymentStatus] = useState("");
   const [shippingOverride, setShippingOverride] = useState("");
   const [discount, setDiscount] = useState("");
+  const [paidNow, setPaidNow] = useState("");
   const [note, setNote] = useState("");
   const [failure, setFailure] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -87,8 +90,20 @@ function NewOrderScreen() {
   // own permission — so an orders-only role still gets a walk-in order.
   const canSeeCustomers = can("customers");
 
+  // A field mid-edit is "" or "2." — parsing that gives NaN, which would spread
+  // through the subtotal and the total and render the whole summary unreadable.
+  const priceOf = (value: string) => {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+  };
+
+  const pricesValid = lines.every((line) => {
+    const parsed = Number.parseFloat(line.price);
+    return Number.isFinite(parsed) && parsed >= 0;
+  });
+
   const subtotal = lines.reduce(
-    (sum, line) => sum + Number.parseFloat(line.price) * line.quantity,
+    (sum, line) => sum + priceOf(line.price) * line.quantity,
     0,
   );
 
@@ -100,6 +115,12 @@ function NewOrderScreen() {
         : 70;
   const off = discount.trim() !== "" ? Number.parseFloat(discount) || 0 : 0;
   const total = Math.max(subtotal + shipping - off, 0);
+
+  // The counter case this exists for: a 1,000tk order where the customer hands
+  // over the 100tk delivery charge now and owes 900 on delivery.
+  const paid = paidNow.trim() !== "" ? Number.parseFloat(paidNow) || 0 : 0;
+  const due = Math.max(total - paid, 0);
+  const overpaid = paid > total;
 
   function addLine(product: Product, variantId: string) {
     const variant = product.variants.find((v) => v.id === variantId);
@@ -117,6 +138,7 @@ function NewOrderScreen() {
           size: variant.name,
           sku: variant.sku,
           price: variant.price,
+          listPrice: variant.price,
           stock: variant.stock_quantity,
           quantity: 1,
         },
@@ -130,11 +152,20 @@ function NewOrderScreen() {
       setFailure("Add at least one item.");
       return;
     }
+    if (!pricesValid) {
+      setFailure("Every line needs a unit price of zero or more.");
+      return;
+    }
     setSaving(true);
     setFailure(null);
     try {
       const order = await adminApi.createOrder(token, {
-        items: lines.map((line) => ({ variant_id: line.variant_id, quantity: line.quantity })),
+        items: lines.map((line) => ({
+          variant_id: line.variant_id,
+          quantity: line.quantity,
+          // Always sent, so what the desk sees on screen is what is charged.
+          unit_price: priceOf(line.price).toFixed(2),
+        })),
         shipping_address: Object.fromEntries(
           Object.entries(address).map(([key, value]) => [key, value.trim() || null]),
         ),
@@ -144,6 +175,7 @@ function NewOrderScreen() {
         payment_status: paymentStatus || null,
         shipping_fee: shippingOverride.trim() !== "" ? shippingOverride : null,
         discount_total: discount.trim() !== "" ? discount : null,
+        amount_paid: paidNow.trim() !== "" ? paidNow : null,
         admin_note: note.trim() || null,
       });
       notify(`${order.order_number} created`);
@@ -193,8 +225,43 @@ function NewOrderScreen() {
                         <span className="block font-mono text-xs text-muted">{line.sku}</span>
                       </Cell>
                       <Cell className="text-muted">{line.size}</Cell>
-                      <Cell className="whitespace-nowrap [font-variant-numeric:tabular-nums]">
-                        {moneyExact(line.price)}
+                      <Cell className="md:w-32">
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={line.price}
+                          aria-label={`Unit price of ${line.product} ${line.size}`}
+                          onChange={(event) =>
+                            setLines((current) =>
+                              current.map((entry) =>
+                                entry.variant_id === line.variant_id
+                                  ? { ...entry, price: event.target.value }
+                                  : entry,
+                              ),
+                            )
+                          }
+                        />
+                        {/* The listed price stays visible once it has been
+                            changed, so a mistyped figure is obvious rather
+                            than quietly becoming the price of the order. */}
+                        {line.price !== line.listPrice ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setLines((current) =>
+                                current.map((entry) =>
+                                  entry.variant_id === line.variant_id
+                                    ? { ...entry, price: entry.listPrice }
+                                    : entry,
+                                ),
+                              )
+                            }
+                            className="mt-1 block text-xs text-muted underline decoration-dotted hover:text-ink"
+                          >
+                            list {moneyExact(line.listPrice)} — reset
+                          </button>
+                        ) : null}
                       </Cell>
                       <Cell className="md:w-28">
                         <Input
@@ -223,9 +290,7 @@ function NewOrderScreen() {
                         ) : null}
                       </Cell>
                       <Cell className="whitespace-nowrap [font-variant-numeric:tabular-nums]">
-                        {moneyExact(
-                          (Number.parseFloat(line.price) * line.quantity).toFixed(2),
-                        )}
+                        {moneyExact((priceOf(line.price) * line.quantity).toFixed(2))}
                       </Cell>
                       <Cell className="text-right">
                         <button
@@ -280,6 +345,32 @@ function NewOrderScreen() {
                     <dt>Total</dt>
                     <dd>{moneyExact(total.toFixed(2))}</dd>
                   </div>
+                  <div className="flex items-center justify-between gap-4 text-muted">
+                    <dt>Paid now</dt>
+                    <dd>
+                      <Input
+                        className="w-28 text-right"
+                        inputMode="decimal"
+                        placeholder="0.00"
+                        value={paidNow}
+                        aria-label="Amount paid now"
+                        onChange={(event) => setPaidNow(event.target.value)}
+                      />
+                    </dd>
+                  </div>
+                  <div
+                    className={`flex justify-between pt-1 text-base font-semibold ${
+                      due > 0 ? "text-accent" : "text-muted"
+                    }`}
+                  >
+                    <dt>Due</dt>
+                    <dd>{moneyExact(due.toFixed(2))}</dd>
+                  </div>
+                  {overpaid ? (
+                    <p className="text-xs text-accent">
+                      That is more than the order comes to.
+                    </p>
+                  ) : null}
                 </dl>
               </>
             )}
@@ -381,7 +472,10 @@ function NewOrderScreen() {
                   }))}
                 />
               </Field>
-              <Field label="Payment" hint="Leave as the method's default unless already paid.">
+              <Field
+                label="Payment"
+                hint="For a part payment, leave this alone and put the amount in “Paid now” beside the total — the due works itself out."
+              >
                 <Dropdown
                   value={paymentStatus}
                   aria-label="Payment status"
@@ -413,10 +507,26 @@ function NewOrderScreen() {
                 {money(total.toFixed(2))}
               </span>
             </div>
+            {paid > 0 ? (
+              <div className="mt-2 space-y-1 border-t border-line pt-2 text-sm [font-variant-numeric:tabular-nums]">
+                <div className="flex items-baseline justify-between">
+                  <span className="label text-muted">Paid</span>
+                  <span className="text-ink">{money(paid.toFixed(2))}</span>
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="label text-muted">Due</span>
+                  <span className={due > 0 ? "font-semibold text-accent" : "text-muted"}>
+                    {money(due.toFixed(2))}
+                  </span>
+                </div>
+              </div>
+            ) : null}
             <Button
               className="mt-4 w-full"
               onClick={submit}
-              disabled={saving || lines.length === 0 || !address.recipient_name.trim()}
+              disabled={
+                saving || lines.length === 0 || !address.recipient_name.trim() || overpaid
+              }
             >
               {saving ? <IconSpinner /> : <IconPlus />}
               {saving ? "Creating…" : "Create order"}

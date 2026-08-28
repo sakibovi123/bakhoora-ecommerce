@@ -41,6 +41,23 @@ export function dateTime(iso: string): string {
   return timeFmt.format(new Date(iso));
 }
 
+/**
+ * Format a bare `YYYY-MM-DD` without letting the browser shift it.
+ *
+ * `new Date("2026-08-01")` is parsed as UTC midnight and then rendered in the
+ * viewer's zone, so anyone west of UTC reads it as 31 July. Anchoring at local
+ * noon keeps the date the API sent. Use this for any date the API sends as a
+ * bare day — an expense's `spent_on`, a report bucket's `period` — rather than
+ * `shortDate`/`dayLabel`, which are for full timestamps.
+ */
+export function plainDate(iso: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(`${iso}T12:00:00`));
+}
+
 export function dayLabel(iso: string): string {
   return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" }).format(
     new Date(`${iso}T00:00:00Z`),
@@ -80,6 +97,9 @@ export const ORDER_STATUS_DOT: Record<OrderStatus, string> = {
 export const PAYMENT_STATUS_TONE: Record<PaymentStatus, string> = {
   unpaid: "bg-paper-3 text-muted",
   pending: "bg-[var(--color-amber-soft)] text-ink",
+  // Money owed is the state staff need to spot while scanning a list, so it
+  // takes the catalogue amber at its stronger step rather than another grey.
+  partial: "bg-[var(--color-amber-tint)] text-ink",
   paid: "bg-[var(--color-green-deep)] text-paper",
   failed: "bg-accent/20 text-accent",
   refunded: "bg-paper-3 text-muted",
@@ -88,6 +108,7 @@ export const PAYMENT_STATUS_TONE: Record<PaymentStatus, string> = {
 export const PAYMENT_STATUS_DOT: Record<PaymentStatus, string> = {
   unpaid: "bg-muted",
   pending: "bg-[var(--color-amber)]",
+  partial: "bg-[var(--color-amber)]",
   paid: "bg-paper",
   failed: "bg-accent",
   refunded: "bg-muted",
@@ -103,6 +124,13 @@ export const NEXT_STATUSES: Record<OrderStatus, OrderStatus[]> = {
   refunded: [],
 };
 
+/**
+ * What the desk may set by hand.
+ *
+ * `partial` is deliberately absent: it is a consequence of how much money came
+ * in, not something you can assert. Recording a payment is what produces it,
+ * and the API rejects setting it directly.
+ */
 export const PAYMENT_STATUSES: PaymentStatus[] = [
   "unpaid",
   "pending",

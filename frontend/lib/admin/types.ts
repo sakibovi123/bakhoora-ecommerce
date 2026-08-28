@@ -14,7 +14,14 @@ export type OrderStatus =
   | "cancelled"
   | "refunded";
 
-export type PaymentStatus = "unpaid" | "pending" | "paid" | "failed" | "refunded";
+/** `partial` is an order carrying a due — some money in, the rest owed. */
+export type PaymentStatus =
+  | "unpaid"
+  | "pending"
+  | "partial"
+  | "paid"
+  | "failed"
+  | "refunded";
 
 /** Menu keys, mirroring MENUS in app/utils/menus.py. */
 export type MenuKey =
@@ -24,7 +31,9 @@ export type MenuKey =
   | "products"
   | "categories"
   | "customers"
-  | "roles";
+  | "roles"
+  | "expenses"
+  | "settings";
 
 export type MenuAction = "view" | "manage";
 
@@ -137,6 +146,8 @@ export interface OrderListItem {
   status: OrderStatus;
   payment_status: PaymentStatus;
   total: string;
+  amount_paid: string;
+  amount_due: string;
   currency: string;
   created_at: string;
 }
@@ -174,6 +185,9 @@ export interface Order {
   shipping_fee: string;
   discount_total: string;
   total: string;
+  /** Collected so far, and what is still owed. The API does the subtraction. */
+  amount_paid: string;
+  amount_due: string;
   recipient_name: string;
   phone: string;
   line1: string;
@@ -248,6 +262,8 @@ export interface SalesBucket {
   cancelled_orders: number;
   cancelled_value: string;
   average_order_value: string;
+  expenses: string;
+  net_profit: string;
 }
 
 export interface SalesSummary {
@@ -265,6 +281,13 @@ export interface SalesSummary {
   change_pct: number | null;
   best_period: string | null;
   best_period_revenue: string;
+  expenses: string;
+  net_profit: string;
+  previous_expenses: string;
+  previous_net_profit: string;
+  /** null unless the preceding window was itself profitable — a percentage
+      across a loss-to-profit sign flip means nothing. */
+  net_profit_change_pct: number | null;
 }
 
 /** The range sliced by one dimension — order status, or payment method. */
@@ -282,6 +305,14 @@ export interface ReportProduct {
   revenue: string;
 }
 
+/** Spend in one category. Counts entries, not orders. */
+export interface ExpenseBreakdown {
+  key: string;
+  label: string;
+  entries: number;
+  amount: string;
+}
+
 export interface SalesReport {
   granularity: Granularity;
   start_date: string;
@@ -294,6 +325,7 @@ export interface SalesReport {
   top_products: ReportProduct[];
   status_breakdown: ReportBreakdown[];
   payment_breakdown: ReportBreakdown[];
+  expense_breakdown: ExpenseBreakdown[];
 }
 
 export interface CustomerDetail {
@@ -335,3 +367,109 @@ export const MAX_PRODUCT_IMAGES = 4;
 
 /** What the file picker offers. The API sniffs the bytes regardless. */
 export const ACCEPTED_IMAGE_TYPES = "image/jpeg,image/png,image/webp,image/gif,image/avif,image/heic";
+
+
+/** The shop's own settings. One row behind /admin/settings. */
+export type AdvanceMode = "none" | "flat" | "delivery";
+
+export interface ShopSettings {
+  site_title: string;
+  tagline: string | null;
+  currency_code: string;
+  currency_symbol: string;
+  /** Decimal as a JSON string, like every other money field the API sends. */
+  delivery_charge: string;
+  free_delivery_threshold: string | null;
+  advance_mode: AdvanceMode;
+  advance_amount: string;
+  logo_url: string | null;
+  favicon_url: string | null;
+}
+
+export interface ShopSettingsInput {
+  site_title?: string;
+  tagline?: string | null;
+  currency_code?: string;
+  currency_symbol?: string;
+  delivery_charge?: string;
+  free_delivery_threshold?: string;
+  clear_free_delivery_threshold?: boolean;
+  advance_mode?: AdvanceMode;
+  advance_amount?: string;
+}
+
+
+/* ------------------------------------------------------------------ expenses */
+
+export interface ExpenseCategory {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  position: number;
+  is_active: boolean;
+}
+
+export interface Expense {
+  id: string;
+  /** ISO date. The day the money left, not the day the row was typed in. */
+  spent_on: string;
+  amount: string;
+  description: string;
+  note: string | null;
+  category: ExpenseCategory;
+}
+
+export interface ExpenseInput {
+  spent_on?: string;
+  amount?: string;
+  description?: string;
+  note?: string | null;
+  category_id?: string;
+}
+
+export interface ExpenseQuery {
+  page?: number;
+  size?: number;
+  search?: string | null;
+  category_id?: string | null;
+  start?: string | null;
+  end?: string | null;
+  sort?: "newest" | "oldest" | "amount_desc" | "amount_asc";
+}
+
+/** A page of expenses, plus the total across the whole filtered range. */
+export interface ExpensePage {
+  items: Expense[];
+  total: number;
+  page: number;
+  size: number;
+  pages: number;
+  total_spent: string;
+}
+
+
+/* ----------------------------------------------------------- caption assistant */
+
+export type CaptionPlatform = "reel" | "facebook" | "instagram" | "whatsapp";
+
+export interface CaptionMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface CaptionReply {
+  content: string;
+  model: string;
+}
+
+export interface CaptionProduct {
+  id: string;
+  label: string;
+}
+
+export interface CaptionStatus {
+  /** False when OPENROUTER_API_KEY is unset — the panel hides the button. */
+  configured: boolean;
+  model: string;
+}

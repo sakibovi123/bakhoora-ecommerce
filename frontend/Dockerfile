@@ -52,6 +52,10 @@ RUN addgroup -g 1001 -S nodejs && adduser -u 1001 -S nextjs -G nodejs
 # have to be copied in alongside it.
 COPY --from=build --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=build --chown=nextjs:nodejs /app/.next/static ./.next/static
+# The brand artwork is reached through static imports, so it is already inside
+# .next/static — but anything served from a plain /public URL (a favicon, a
+# robots.txt) lives only here, and standalone does not carry it.
+COPY --from=build --chown=nextjs:nodejs /app/public ./public
 
 USER nextjs
 

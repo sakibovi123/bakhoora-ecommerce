@@ -61,4 +61,6 @@ export const MENU_TONE: Record<MenuKey, Tone> = {
   categories: "amber",
   customers: "plum",
   roles: "plum",
+  expenses: "green",
+  settings: "neutral",
 };

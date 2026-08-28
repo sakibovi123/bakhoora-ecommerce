@@ -16,6 +16,8 @@ const LABELS: Record<MenuKey, string> = {
   categories: "categories",
   customers: "customers",
   roles: "roles and access",
+  expenses: "expenses",
+  settings: "shop settings",
 };
 
 /**

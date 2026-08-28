@@ -83,7 +83,7 @@ export function ProductFields({
         <Field label="Slug" hint="Leave blank and one is generated from the name.">
           <Input
             maxLength={220}
-            placeholder="royal-oud-intense"
+            placeholder="amber-woods-decant"
             value={value.slug}
             onChange={(event) => set("slug", event.target.value)}
           />

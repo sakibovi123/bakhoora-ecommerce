@@ -4,16 +4,28 @@ import { useState } from "react";
 
 import { QuantityStepper } from "@/components/quantity-stepper";
 import { useCart } from "@/lib/cart-context";
-import { formatPrice } from "@/lib/format";
+import { useMoney } from "@/lib/shop-settings";
 import type { Product } from "@/lib/types";
 
 export function BuyPanel({ product }: { product: Product }) {
   const { add } = useCart();
-  const firstAvailable = product.variants.find((variant) => variant.stock > 0) ?? product.variants[0];
-  const [variantId, setVariantId] = useState(firstAvailable.id);
+  const money = useMoney();
+  // A product with no active sizes is a real state now that the catalogue is
+  // whatever the admin has entered — it must not index into an empty array.
+  const sellable = product.variants.filter((variant) => variant.isActive);
+  const firstAvailable = sellable.find((variant) => variant.stock > 0) ?? sellable[0];
+  const [variantId, setVariantId] = useState(firstAvailable?.id ?? "");
   const [quantity, setQuantity] = useState(1);
 
-  const variant = product.variants.find((item) => item.id === variantId) ?? firstAvailable;
+  const variant = sellable.find((item) => item.id === variantId) ?? firstAvailable;
+
+  if (!variant) {
+    return (
+      <p className="label text-muted">
+        No sizes listed yet — write to us and we will tell you what is in the bottle.
+      </p>
+    );
+  }
   const soldOut = variant.stock <= 0;
   const lowStock = variant.stock > 0 && variant.stock <= 5;
 
@@ -21,7 +33,7 @@ export function BuyPanel({ product }: { product: Product }) {
     <div>
       <p className="label mb-4 text-muted">Size</p>
       <div className="flex flex-wrap gap-3">
-        {product.variants.map((option) => {
+        {sellable.map((option) => {
           const selected = option.id === variantId;
           const unavailable = option.stock <= 0;
           return (
@@ -36,7 +48,7 @@ export function BuyPanel({ product }: { product: Product }) {
               } ${unavailable ? "opacity-40" : ""}`}
             >
               <span className="label">{option.name}</span>
-              <span className="text-sm tabular-nums">{formatPrice(option.price)}</span>
+              <span className="text-sm tabular-nums">{money(option.price)}</span>
             </button>
           );
         })}
@@ -50,10 +62,10 @@ export function BuyPanel({ product }: { product: Product }) {
         />
         <button
           disabled={soldOut}
-          onClick={() => add(product.slug, variant.id, quantity)}
+          onClick={() => add(product, variant, quantity)}
           className="label flex-1 bg-ink px-7 py-4 text-paper transition-colors hover:bg-ink-2 disabled:cursor-not-allowed disabled:bg-muted"
         >
-          {soldOut ? "Sold out" : `Add to bag — ${formatPrice(variant.price * quantity)}`}
+          {soldOut ? "Sold out" : `Add to bag — ${money(variant.price * quantity)}`}
         </button>
       </div>
 

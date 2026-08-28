@@ -38,13 +38,24 @@ def _extension(head: bytes) -> str | None:
     return None
 
 
-def media_root() -> Path:
-    root = Path(settings.MEDIA_ROOT) / "products"
+# Uploads are filed by what they are. Branding is a handful of files that live
+# as long as the shop does; product images churn. Keeping them apart means
+# `delete_stored` can never be talked into removing a logo by way of a product
+# image row, and a future move to object storage can treat them differently.
+PRODUCTS_FOLDER = "products"
+BRANDING_FOLDER = "branding"
+_FOLDERS = frozenset({PRODUCTS_FOLDER, BRANDING_FOLDER})
+
+
+def media_root(folder: str = PRODUCTS_FOLDER) -> Path:
+    if folder not in _FOLDERS:
+        raise ValueError(f"Unknown media folder: {folder!r}")
+    root = Path(settings.MEDIA_ROOT) / folder
     root.mkdir(parents=True, exist_ok=True)
     return root
 
 
-async def save_image(file: UploadFile) -> str:
+async def save_image(file: UploadFile, folder: str = PRODUCTS_FOLDER) -> str:
     """Validate and store one upload. Returns the URL to serve it from."""
     payload = await file.read()
 
@@ -66,17 +77,19 @@ async def save_image(file: UploadFile) -> str:
     # Never reuse the client's filename: it may collide, contain a path, or
     # carry an extension that disagrees with the actual bytes.
     name = f"{uuid.uuid4().hex}.{extension}"
-    (media_root() / name).write_bytes(payload)
-    return f"{settings.MEDIA_URL}/products/{name}"
+    (media_root(folder) / name).write_bytes(payload)
+    return f"{settings.MEDIA_URL}/{folder}/{name}"
 
 
 def delete_stored(url: str) -> None:
     """Remove a file this module wrote. Ignores anything it did not."""
-    prefix = f"{settings.MEDIA_URL}/products/"
-    if not url.startswith(prefix):
+    for folder in _FOLDERS:
+        prefix = f"{settings.MEDIA_URL}/{folder}/"
+        if not url.startswith(prefix):
+            continue
+        name = url[len(prefix) :]
+        # Defend the storage root against a crafted row in the database.
+        if "/" in name or "\\" in name or name in {"", ".", ".."}:
+            return
+        (media_root(folder) / name).unlink(missing_ok=True)
         return
-    name = url[len(prefix) :]
-    # Defend the storage root against a crafted row in the database.
-    if "/" in name or "\\" in name or name in {"", ".", ".."}:
-        return
-    (media_root() / name).unlink(missing_ok=True)

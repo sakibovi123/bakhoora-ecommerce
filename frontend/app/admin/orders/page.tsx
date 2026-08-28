@@ -143,7 +143,7 @@ function OrdersScreen() {
           </div>
         ) : (
           <>
-            <Table head={["Order", "Placed", "Status", "Payment", "Total", ""]}>
+            <Table head={["Order", "Placed", "Status", "Payment", "Total", "Due", ""]}>
               {data.items.map((order) => (
                 <Row key={order.id}>
                   <Cell>
@@ -167,6 +167,16 @@ function OrdersScreen() {
                   </Cell>
                   <Cell className="whitespace-nowrap text-right [font-variant-numeric:tabular-nums]">
                     {money(order.total)}
+                  </Cell>
+                  {/* An outstanding balance is the one number worth scanning a
+                      list of orders for, so it is a column rather than
+                      something you have to open each order to find. */}
+                  <Cell className="whitespace-nowrap text-right [font-variant-numeric:tabular-nums]">
+                    {Number.parseFloat(order.amount_due) > 0 ? (
+                      <span className="font-semibold text-accent">{money(order.amount_due)}</span>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
                   </Cell>
                   <Cell className="text-right">
                     <Link

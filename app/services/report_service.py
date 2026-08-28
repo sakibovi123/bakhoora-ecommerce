@@ -49,6 +49,7 @@ from app.core.exceptions import BusinessRuleError
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.product import ProductVariant
 from app.schemas.report import (
+    ExpenseBreakdown,
     Granularity,
     ReportBreakdown,
     ReportProduct,
@@ -56,7 +57,7 @@ from app.schemas.report import (
     SalesReport,
     SalesSummary,
 )
-from app.services import order_service
+from app.services import expense_service, order_service
 
 TOP_PRODUCT_LIMIT = 10
 MAX_RANGE_DAYS = 731
@@ -312,12 +313,24 @@ async def sales_report(
     previous_first, _ = _utc_window(start - timedelta(days=span), start - timedelta(days=1))
 
     money, comparison = await _bucket_rows(db, unit, first, last, previous_first)
+    # Plain dates, never `first.date()`: those are UTC instants, and Dhaka
+    # midnight is 18:00 UTC the day before, so the lower bound would land a day
+    # early while the upper bound happened to be right. `start` here is already
+    # snapped to the first of the month for a monthly report.
+    spend = await expense_service.totals(
+        db,
+        unit=unit,
+        start=start,
+        end=end,
+        previous_start=start - timedelta(days=span),
+    )
 
     buckets: list[SalesBucket] = []
     for period in _periods(start, end, granularity):
         row = money.get(period)
         orders = row.orders if row else 0
         net = _money(row.net_revenue) if row else _ZERO
+        spent = spend.by_period[period].amount if period in spend.by_period else _ZERO
         buckets.append(
             SalesBucket(
                 period=period,
@@ -331,12 +344,17 @@ async def sales_report(
                 cancelled_orders=row.cancelled_orders if row else 0,
                 cancelled_value=_money(row.cancelled_value) if row else _ZERO,
                 average_order_value=_average(net, orders),
+                expenses=spent,
+                net_profit=net - spent,
             )
         )
 
     total_orders = sum(bucket.orders for bucket in buckets)
     total_net = sum((bucket.net_revenue for bucket in buckets), _ZERO)
     previous = _money(comparison.net_revenue) if comparison else _ZERO
+    total_expenses = sum((bucket.expenses for bucket in buckets), _ZERO)
+    total_profit = total_net - total_expenses
+    previous_profit = previous - spend.previous
     best = max(buckets, key=lambda bucket: bucket.net_revenue, default=None)
 
     summary = SalesSummary(
@@ -355,11 +373,41 @@ async def sales_report(
         change_pct=(
             round(float((total_net - previous) / previous * 100), 1) if previous else None
         ),
+        expenses=total_expenses,
+        net_profit=total_profit,
+        previous_expenses=spend.previous,
+        previous_net_profit=previous_profit,
+        # Only when the window being compared against actually made money.
+        # Percentage change out of a loss has no sensible reading.
+        net_profit_change_pct=(
+            round(float((total_profit - previous_profit) / previous_profit * 100), 1)
+            if previous_profit > 0
+            else None
+        ),
+        # Still revenue's best month, not profit's. Redefining a figure the
+        # operator already reads would be a silent change of meaning.
         best_period=best.period if best and best.net_revenue else None,
         best_period_revenue=best.net_revenue if best else _ZERO,
     )
 
     status_breakdown, payment_breakdown = await _breakdowns(db, first, last)
+
+    # Names are resolved here rather than joined into the aggregate: the
+    # category table is small and separately cached, and dragging a text column
+    # through GROUPING SETS buys nothing.
+    names = {
+        category.id: category.name
+        for category in await expense_service.list_categories(db, include_inactive=True)
+    }
+    expense_breakdown = [
+        ExpenseBreakdown(
+            key=row.category_id,
+            label=names.get(row.category_id, "Removed category"),
+            entries=row.entries,
+            amount=row.amount,
+        )
+        for row in spend.by_category
+    ]
 
     return SalesReport(
         granularity=granularity,
@@ -372,6 +420,7 @@ async def sales_report(
         top_products=await _top_products(db, first, last),
         status_breakdown=status_breakdown,
         payment_breakdown=payment_breakdown,
+        expense_breakdown=expense_breakdown,
     )
 
 
@@ -390,6 +439,11 @@ def to_csv(report: SalesReport) -> str:
         "Cancelled orders",
         "Cancelled value",
         "Average order",
+        # Appended rather than slotted next to the revenue columns: the test
+        # suite pins the leading header and the Total row prefix, and existing
+        # spreadsheets read by position.
+        "Expenses",
+        "Net profit",
     )
     writer.writerow(columns)
     for bucket in report.buckets:
@@ -405,6 +459,8 @@ def to_csv(report: SalesReport) -> str:
                 bucket.cancelled_orders,
                 bucket.cancelled_value,
                 bucket.average_order_value,
+                bucket.expenses,
+                bucket.net_profit,
             )
         )
     total = report.summary
@@ -421,6 +477,8 @@ def to_csv(report: SalesReport) -> str:
             total.cancelled_orders,
             total.cancelled_value,
             total.average_order_value,
+            total.expenses,
+            total.net_profit,
         )
     )
     return buffer.getvalue()

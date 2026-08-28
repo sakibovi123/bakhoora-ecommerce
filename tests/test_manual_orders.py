@@ -278,3 +278,151 @@ async def test_taking_an_order_needs_orders_manage(client, admin_token, customer
     product = await _product(client, admin_token)
     response = await _create(client, customer_token, product=product)
     assert response.status_code == 403
+
+
+# --- part payments and dues ------------------------------------------------
+#
+# The counter case: a customer takes a 1,000tk bottle, hands over the 100tk
+# delivery charge now and owes 900 on delivery. The shop needs that 900 to be a
+# number the system holds, not something a staff member remembers.
+
+async def _one_thousand_taka_order(client, admin_token, **overrides):
+    """One 6ml bottle at 1,000, shipping forced to 100 — total 1,100."""
+    product = await _product(client, admin_token)
+    return await _create(
+        client,
+        admin_token,
+        items=[{"variant_id": product["variants"][0]["id"], "quantity": 1}],
+        shipping_fee="100.00",
+        **overrides,
+    )
+
+
+async def test_an_advance_leaves_the_rest_as_due(client, admin_token):
+    response = await _one_thousand_taka_order(client, admin_token, amount_paid="100.00")
+    assert response.status_code == 201, response.text
+
+    order = response.json()
+    assert order["total"] == "1100.00"
+    assert order["amount_paid"] == "100.00"
+    assert order["amount_due"] == "1000.00"
+    # The badge is read off the money rather than set by hand.
+    assert order["payment_status"] == "partial"
+
+
+async def test_no_advance_leaves_the_whole_total_owed(client, admin_token):
+    order = (await _one_thousand_taka_order(client, admin_token)).json()
+    assert order["amount_paid"] == "0.00"
+    assert order["amount_due"] == "1100.00"
+    assert order["payment_status"] == "unpaid"
+
+
+async def test_an_advance_is_written_into_the_ledger(client, admin_token):
+    order = (
+        await _one_thousand_taka_order(client, admin_token, amount_paid="100.00")
+    ).json()
+    receipts = [p for p in order["payments"] if p["status"] == "paid"]
+    assert [p["amount"] for p in receipts] == ["100.00"]
+
+
+async def test_paying_more_than_the_order_is_refused(client, admin_token):
+    response = await _one_thousand_taka_order(client, admin_token, amount_paid="2000.00")
+    assert response.status_code == 422, response.text
+    assert "more than the order total" in response.json()["detail"]
+
+
+async def test_settling_the_due_closes_the_order_out(client, admin_token):
+    order = (
+        await _one_thousand_taka_order(client, admin_token, amount_paid="100.00")
+    ).json()
+
+    response = await client.post(
+        f"/api/v1/admin/orders/{order['id']}/payments",
+        json={"amount": "1000.00", "reference": "collected by courier"},
+        headers=auth(admin_token),
+    )
+    assert response.status_code == 201, response.text
+
+    settled = response.json()
+    assert settled["amount_paid"] == "1100.00"
+    assert settled["amount_due"] == "0.00"
+    assert settled["payment_status"] == "paid"
+    assert "collected by courier" in [p["reference"] for p in settled["payments"]]
+
+
+async def test_payments_accumulate_across_collections(client, admin_token):
+    order = (await _one_thousand_taka_order(client, admin_token)).json()
+    for amount in ("400.00", "400.00"):
+        response = await client.post(
+            f"/api/v1/admin/orders/{order['id']}/payments",
+            json={"amount": amount},
+            headers=auth(admin_token),
+        )
+        assert response.status_code == 201, response.text
+
+    assert response.json()["amount_paid"] == "800.00"
+    assert response.json()["amount_due"] == "300.00"
+    assert response.json()["payment_status"] == "partial"
+
+
+async def test_collecting_more_than_is_owed_is_refused(client, admin_token):
+    order = (
+        await _one_thousand_taka_order(client, admin_token, amount_paid="100.00")
+    ).json()
+    response = await client.post(
+        f"/api/v1/admin/orders/{order['id']}/payments",
+        json={"amount": "5000.00"},
+        headers=auth(admin_token),
+    )
+    assert response.status_code == 422, response.text
+    assert "still owed" in response.json()["detail"]
+
+
+async def test_marking_an_order_paid_by_hand_clears_the_due(client, admin_token):
+    """The dropdown and the arithmetic must not tell different stories."""
+    order = (
+        await _one_thousand_taka_order(client, admin_token, amount_paid="100.00")
+    ).json()
+    response = await client.patch(
+        f"/api/v1/admin/orders/{order['id']}",
+        json={"payment_status": "paid"},
+        headers=auth(admin_token),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["amount_due"] == "0.00"
+    assert response.json()["amount_paid"] == "1100.00"
+
+
+async def test_partial_cannot_be_asserted_by_hand(client, admin_token):
+    order = (await _one_thousand_taka_order(client, admin_token)).json()
+    response = await client.patch(
+        f"/api/v1/admin/orders/{order['id']}",
+        json={"payment_status": "partial"},
+        headers=auth(admin_token),
+    )
+    assert response.status_code == 422, response.text
+    assert "Record a payment" in response.json()["detail"]
+
+
+async def test_the_due_rides_along_on_the_orders_list(client, admin_token):
+    await _one_thousand_taka_order(client, admin_token, amount_paid="100.00")
+    response = await client.get("/api/v1/admin/orders", headers=auth(admin_token))
+    assert response.status_code == 200, response.text
+    assert response.json()["items"][0]["amount_due"] == "1000.00"
+
+
+async def test_a_cancelled_order_takes_no_more_money(client, admin_token):
+    order = (await _one_thousand_taka_order(client, admin_token)).json()
+    cancelled = await client.patch(
+        f"/api/v1/admin/orders/{order['id']}",
+        json={"status": "cancelled"},
+        headers=auth(admin_token),
+    )
+    assert cancelled.status_code == 200, cancelled.text
+
+    response = await client.post(
+        f"/api/v1/admin/orders/{order['id']}/payments",
+        json={"amount": "100.00"},
+        headers=auth(admin_token),
+    )
+    assert response.status_code == 422, response.text

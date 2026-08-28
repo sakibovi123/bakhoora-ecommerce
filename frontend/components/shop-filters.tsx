@@ -3,21 +3,14 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback } from "react";
 
-import { CATEGORIES } from "@/lib/catalog";
-
-const SORTS = [
-  { value: "featured", label: "Featured" },
-  { value: "price-asc", label: "Price · low to high" },
-  { value: "price-desc", label: "Price · high to low" },
-  { value: "name", label: "A–Z" },
-];
+import { CATEGORIES, SORTS } from "@/lib/catalog";
 
 export function ShopFilters({ resultCount }: { resultCount: number }) {
   const router = useRouter();
   const params = useSearchParams();
 
   const category = params.get("category") ?? "all";
-  const sort = params.get("sort") ?? "featured";
+  const sort = params.get("sort") ?? "newest";
   const inStockOnly = params.get("stock") === "1";
 
   const push = useCallback(
@@ -79,7 +72,7 @@ export function ShopFilters({ resultCount }: { resultCount: number }) {
           </label>
 
           <p className="label text-muted tabular-nums">
-            {resultCount} {resultCount === 1 ? "blend" : "blends"}
+            {resultCount} {resultCount === 1 ? "fragrance" : "fragrances"}
           </p>
         </div>
       </div>

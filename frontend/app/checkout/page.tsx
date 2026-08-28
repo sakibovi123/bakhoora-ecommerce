@@ -4,10 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
-import { Bottle } from "@/components/bottle";
+import { CartLineThumb } from "@/components/cart-line-thumb";
 import { ButtonLink } from "@/components/ui";
 import { useCart } from "@/lib/cart-context";
-import { formatPrice } from "@/lib/format";
+import { useMoney } from "@/lib/shop-settings";
 
 const PAYMENT_METHODS = [
   {
@@ -26,6 +26,7 @@ const DISTRICTS = ["Dhaka", "Chattogram", "Sylhet", "Khulna", "Rajshahi", "Baris
 
 export default function CheckoutPage() {
   const { lines, subtotal, shipping, total, clear, isReady } = useCart();
+  const money = useMoney();
   const router = useRouter();
   const [method, setMethod] = useState("cod");
   const [submitting, setSubmitting] = useState(false);
@@ -165,19 +166,15 @@ export default function CheckoutPage() {
               {lines.map((line) => (
                 <li key={line.variantId} className="flex items-center gap-4">
                   <div className="size-16 shrink-0 bg-paper-2">
-                    <Bottle
-                      tone={line.product.tone}
-                      shape={line.product.category === "attar" ? "vial" : "flacon"}
-                      className="size-16"
-                    />
+                    <CartLineThumb line={line} className="size-16" />
                   </div>
                   <div className="flex-1">
-                    <p className="font-display text-lg leading-tight">{line.product.name}</p>
+                    <p className="font-display text-lg leading-tight">{line.name}</p>
                     <p className="label mt-1 text-muted">
-                      {line.variant.name} × {line.quantity}
+                      {line.variantName} × {line.quantity}
                     </p>
                   </div>
-                  <p className="text-sm tabular-nums">{formatPrice(line.lineTotal)}</p>
+                  <p className="text-sm tabular-nums">{money(line.lineTotal)}</p>
                 </li>
               ))}
             </ul>
@@ -185,15 +182,15 @@ export default function CheckoutPage() {
             <dl className="mt-8 space-y-3 border-t border-line pt-6 text-sm">
               <div className="flex justify-between">
                 <dt className="text-muted">Subtotal</dt>
-                <dd className="tabular-nums">{formatPrice(subtotal)}</dd>
+                <dd className="tabular-nums">{money(subtotal)}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-muted">Delivery</dt>
-                <dd className="tabular-nums">{shipping === 0 ? "Free" : formatPrice(shipping)}</dd>
+                <dd className="tabular-nums">{shipping === 0 ? "Free" : money(shipping)}</dd>
               </div>
               <div className="flex justify-between border-t border-line pt-4 text-xl">
                 <dt className="font-display">Total</dt>
-                <dd className="font-display tabular-nums">{formatPrice(total)}</dd>
+                <dd className="font-display tabular-nums">{money(total)}</dd>
               </div>
             </dl>
 

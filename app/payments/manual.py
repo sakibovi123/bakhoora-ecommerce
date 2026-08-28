@@ -10,15 +10,27 @@ class CashOnDeliveryProvider:
     requires_prepayment = False
 
     async def create_payment(self, order: Order) -> PaymentIntent:
+        # With an advance configured, "cash on delivery" is only true of the
+        # remainder — saying otherwise would promise the customer they owe
+        # nothing until the parcel lands, and the shop would chase them for it.
+        advance = order.advance_required
+        if advance > 0:
+            message = (
+                f"Send {advance} {order.currency} in advance to confirm this order, "
+                f"then pay the remaining {order.total - advance} {order.currency} "
+                f"to the courier on delivery."
+            )
+        else:
+            message = f"Pay {order.total} {order.currency} to the courier when your order arrives."
+
         return PaymentIntent(
             provider=self.name,
             status=PaymentStatus.UNPAID,
             reference=order.order_number,
             instructions={
                 "type": "cash_on_delivery",
-                "message": (
-                    f"Pay {order.total} {order.currency} to the courier when your order arrives."
-                ),
+                "advance_required": str(advance),
+                "message": message,
             },
         )
 

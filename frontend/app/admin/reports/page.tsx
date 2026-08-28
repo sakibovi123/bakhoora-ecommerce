@@ -5,6 +5,7 @@ import { useCallback, useState, type ReactNode } from "react";
 import { Require } from "@/components/admin/require";
 import {
   IconAlert,
+  IconExpenses,
   IconCustomers,
   IconOrders,
   IconProducts,
@@ -26,7 +27,7 @@ import {
   Table,
 } from "@/components/admin/ui";
 import { adminApi } from "@/lib/admin/client";
-import { count, money, moneyExact } from "@/lib/admin/format";
+import { count, money, moneyExact, plainDate } from "@/lib/admin/format";
 import { useResource } from "@/lib/admin/use-resource";
 import type { Granularity, SalesBucket, SalesReport } from "@/lib/admin/types";
 import { useAuth } from "@/lib/auth";
@@ -98,7 +99,7 @@ function ReportsScreen() {
         title="Sales reports"
         subtitle={
           data
-            ? `${plainDate(data.start_date)} — ${plainDate(data.end_date)} · days end at midnight ${data.timezone}`
+            ? `${plainDate(data.start_date)} — ${plainDate(data.end_date)} · days end at midnight ${data.timezone} · revenue on order date, expenses on payment date`
             : "Daily and monthly takings."
         }
         actions={<ExportButton granularity={granularity} start={start} end={end} />}
@@ -220,6 +221,8 @@ function Toggle({
 
 function ReportBody({ report }: { report: SalesReport }) {
   const { summary, buckets, top_products, status_breakdown, payment_breakdown } = report;
+  const { expense_breakdown } = report;
+  const spent = Number.parseFloat(summary.expenses) || 0;
   const sold = buckets.some((bucket) => bucket.orders > 0);
   const bestLabel = buckets.find((bucket) => bucket.period === summary.best_period)?.label;
 
@@ -294,6 +297,8 @@ function ReportBody({ report }: { report: SalesReport }) {
             "Shipping",
             "Net revenue",
             "Average",
+            "Expenses",
+            "Net profit",
           ]}
         >
           {buckets.map((bucket) => (
@@ -318,9 +323,100 @@ function ReportBody({ report }: { report: SalesReport }) {
             <Cell className="[font-variant-numeric:tabular-nums]">
               {moneyExact(summary.average_order_value)}
             </Cell>
+            <Cell className="[font-variant-numeric:tabular-nums]">
+              {moneyExact(summary.expenses)}
+            </Cell>
+            <Cell className="font-medium [font-variant-numeric:tabular-nums]">
+              {moneyExact(summary.net_profit)}
+            </Cell>
           </Row>
         </Table>
       </Panel>
+
+      <div className="grid gap-3 xl:grid-cols-[1fr_1.4fr] xl:items-start">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+          <StatTile
+            tone="amber"
+            icon={IconExpenses}
+            label="Expenses paid"
+            value={money(summary.expenses)}
+            note={`${expense_breakdown.length} categor${
+              expense_breakdown.length === 1 ? "y" : "ies"
+            } used`}
+          />
+          <StatTile
+            hero
+            tone={Number.parseFloat(summary.net_profit) < 0 ? "alert" : "green"}
+            icon={IconReports}
+            label="Net profit"
+            value={money(summary.net_profit)}
+            note={
+              <Change
+                pct={summary.net_profit_change_pct}
+                previous={summary.previous_net_profit}
+              />
+            }
+          />
+        </div>
+
+        <Panel
+          title={
+            <span className="flex items-center gap-2">
+              <IconExpenses className="text-[var(--color-amber)]" />
+              Expenses paid in this range
+            </span>
+          }
+          tone="amber"
+          bodyClassName="p-4 sm:p-5"
+        >
+          {expense_breakdown.length ? (
+            <ul className="space-y-3">
+              {expense_breakdown.map((row) => {
+                const value = Number.parseFloat(row.amount) || 0;
+                const share = spent ? (value / spent) * 100 : 0;
+                return (
+                  <li key={row.key}>
+                    <div className="flex items-baseline justify-between gap-3 text-sm">
+                      <span>{row.label}</span>
+                      <span className="[font-variant-numeric:tabular-nums]">
+                        {moneyExact(row.amount)}
+                      </span>
+                    </div>
+                    <div className="mt-1.5 flex items-center gap-3">
+                      <span
+                        className="h-1 flex-1 bg-[var(--color-amber-soft)]"
+                        aria-hidden
+                      >
+                        <span
+                          className="block h-full bg-[var(--color-amber)]"
+                          style={{ width: `${share}%` }}
+                        />
+                      </span>
+                      <span className="label shrink-0 text-muted">
+                        {row.entries} entr{row.entries === 1 ? "y" : "ies"}
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <Empty
+              title="Nothing spent in this range."
+              body="Expenses recorded on the Expenses page show up here."
+            />
+          )}
+
+          {/* Said plainly, because both of these make a month read oddly and
+              neither is a bug. */}
+          <p className="mt-6 border-t border-line pt-4 text-xs leading-relaxed text-muted">
+            Net profit is net revenue less expenses paid in this range. Revenue counts an order
+            once it is confirmed; an expense counts on the day it was paid. Stock bought in bulk
+            lands entirely in the month it was paid for, not in the months it sells — so a large
+            purchase can push a profitable month into a loss.
+          </p>
+        </Panel>
+      </div>
 
       <div className="grid gap-3 xl:grid-cols-[1.4fr_1fr]">
         <Panel
@@ -369,8 +465,10 @@ function ReportBody({ report }: { report: SalesReport }) {
 function BucketRow({ bucket }: { bucket: SalesBucket }) {
   // A period with no trade is dimmed rather than hidden: a gap in the dates
   // reads as missing data, and the whole point of the zero-filled series is
-  // that a quiet Tuesday is a fact, not an omission.
-  const quiet = bucket.orders === 0;
+  // that a quiet Tuesday is a fact, not an omission. Spending counts as
+  // activity — a month that sold nothing but bought stock is the opposite of
+  // quiet, and dimming it would grey out the rows expenses exist to show.
+  const quiet = bucket.orders === 0 && !Number.parseFloat(bucket.expenses);
   return (
     <Row>
       <Cell className={quiet ? "text-muted" : ""}>{bucket.label}</Cell>
@@ -396,6 +494,16 @@ function BucketRow({ bucket }: { bucket: SalesBucket }) {
       </Cell>
       <Cell className={`[font-variant-numeric:tabular-nums] ${quiet ? "text-muted" : ""}`}>
         {bucket.orders ? moneyExact(bucket.average_order_value) : "—"}
+      </Cell>
+      <Cell className={`[font-variant-numeric:tabular-nums] ${quiet ? "text-muted" : ""}`}>
+        {moneyExact(bucket.expenses)}
+      </Cell>
+      <Cell
+        className={`[font-variant-numeric:tabular-nums] ${
+          quiet ? "text-muted" : Number.parseFloat(bucket.net_profit) < 0 ? "text-accent" : ""
+        }`}
+      >
+        {moneyExact(bucket.net_profit)}
       </Cell>
     </Row>
   );
@@ -505,21 +613,6 @@ function ExportButton({
       {busy ? "Preparing…" : failed ? "Failed — retry" : "Export CSV"}
     </Button>
   );
-}
-
-/**
- * Format a bare `YYYY-MM-DD` without letting the browser shift it.
- *
- * `new Date("2026-08-01")` is parsed as UTC midnight and then rendered in the
- * viewer's zone, so anyone west of UTC reads it as 31 July. Anchoring at local
- * noon keeps the date the API sent.
- */
-function plainDate(iso: string): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  }).format(new Date(`${iso}T12:00:00`));
 }
 
 /**
