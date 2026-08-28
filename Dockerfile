@@ -9,7 +9,13 @@ FROM python:3.12-slim AS base
 # bootstrap and pins the version alongside everything else.
 COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /bin/uv
 
-ENV PYTHONUNBUFFERED=1 \
+# A container is a deployment, not a workstation. Without this the setting
+# defaults to "local" (app/core/config.py), and a "local" backend trusts any
+# http://localhost origin for credentialed requests — so a deployed image with
+# ENVIRONMENT unset would accept logins from anyone's dev server. Override it
+# per-environment if a deploy genuinely needs a different value.
+ENV ENVIRONMENT=production \
+    PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \

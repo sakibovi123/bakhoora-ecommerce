@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -16,8 +17,32 @@ from app.core.exceptions import AppError, app_error_handler, database_unavailabl
 from app.db.session import engine
 
 
+logger = logging.getLogger("bakhoora")
+
+
+def _warn_if_browsers_are_locked_out() -> None:
+    """Say so at boot when a deployment has no browser origin configured.
+
+    Without this the symptom surfaces hours later, in someone else's browser
+    console, as a CORS preflight failure that says nothing about which variable
+    is wrong. It warns rather than refuses to start: the storefront renders
+    server-side and does not need CORS, so a hard failure would take a working
+    shop down to fix a broken admin login.
+    """
+    if settings.is_local or settings.cors_origins or settings.cors_origin_regex:
+        return
+    logger.warning(
+        "CORS: ENVIRONMENT=%s and no CORS_ORIGINS is set, so every browser "
+        "origin will be refused and the admin panel cannot sign in. Set "
+        "CORS_ORIGINS to the frontend's origin, e.g. "
+        "CORS_ORIGINS=https://your-frontend.example.com",
+        settings.ENVIRONMENT,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    _warn_if_browsers_are_locked_out()
     yield
     await engine.dispose()
 
