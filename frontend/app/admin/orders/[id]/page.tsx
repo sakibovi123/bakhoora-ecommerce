@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import {
@@ -9,7 +9,9 @@ import {
   IconPrinter,
   IconSave,
   IconSpinner,
+  IconTrash,
 } from "@/components/admin/icons";
+import { useConfirm } from "@/components/admin/dialog";
 import { Dropdown } from "@/components/admin/dropdown";
 import { Require } from "@/components/admin/require";
 import { useToast } from "@/components/admin/toast";
@@ -56,6 +58,8 @@ function OrderDetailScreen() {
   const { id } = useParams<{ id: string }>();
   const { token, can } = useAuth();
   const { notify } = useToast();
+  const confirm = useConfirm();
+  const router = useRouter();
 
   // The screen itself only needs `view`; taking money needs `manage`, so a
   // read-only role is not shown a panel whose every button would 403.
@@ -68,6 +72,7 @@ function OrderDetailScreen() {
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus | "">("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (order) setPaymentStatus(order.payment_status);
@@ -103,6 +108,29 @@ function OrderDetailScreen() {
       notify(cause instanceof ApiError ? cause.message : "Could not update the order", "error");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function remove() {
+    if (!token || !order) return;
+    const sure = await confirm({
+      title: `Delete ${order.order_number}?`,
+      body:
+        "The order, its items and every payment recorded against it go for good, " +
+        "and it stops counting in the sales reports. Stock still reserved for it " +
+        "goes back on the shelf. To keep the record instead, move it to Cancelled.",
+      confirmLabel: "Delete order",
+      tone: "danger",
+    });
+    if (!sure) return;
+    setDeleting(true);
+    try {
+      await adminApi.deleteOrder(token, order.id);
+      notify(`${order.order_number} deleted`);
+      router.push("/admin/orders");
+    } catch (cause) {
+      notify(cause instanceof ApiError ? cause.message : "Could not delete the order", "error");
+      setDeleting(false);
     }
   }
 
@@ -289,6 +317,28 @@ function OrderDetailScreen() {
               </Button>
             </div>
           </Panel>
+
+          {/* Deleting is a "this order should never have existed" action — a
+              duplicate typed at the counter — so it sits apart from the status
+              controls rather than beside them, and only a manager sees it. */}
+          {canManage ? (
+            <Panel title="Delete this order">
+              <p className="text-sm leading-relaxed text-muted">
+                Removes the order and its payment records for good. An order the
+                customer backed out of is better moved to Cancelled — that keeps
+                the history and puts the stock back too.
+              </p>
+              <Button
+                tone="danger"
+                className="mt-4 w-full"
+                onClick={remove}
+                disabled={deleting}
+              >
+                {deleting ? <IconSpinner /> : <IconTrash />}
+                {deleting ? "Deleting…" : "Delete order"}
+              </Button>
+            </Panel>
+          ) : null}
         </div>
       </div>
     </div>

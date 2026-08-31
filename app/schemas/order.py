@@ -86,6 +86,9 @@ class OrderListItem(BaseModel):
 
     id: uuid.UUID
     order_number: str
+    # The snapshot taken when the order was placed, not the account's current
+    # name: a row in this list has to keep saying who it was actually for.
+    recipient_name: str
     status: OrderStatus
     payment_status: PaymentStatus
     total: Decimal
@@ -169,6 +172,22 @@ class PaymentRecord(BaseModel):
     # Defaults to the order's own method: cash on delivery collected in cash.
     provider: str | None = Field(default=None, max_length=40)
     reference: str | None = Field(default=None, max_length=120)
+
+
+class OrderBulkDelete(BaseModel):
+    """The rows the desk ticked in the orders list.
+
+    Capped because this is a hand-made selection off one page of the table, not
+    a way to empty the shop's history in a single request.
+    """
+
+    ids: list[uuid.UUID] = Field(min_length=1, max_length=100)
+
+
+class OrderBulkDeleteResult(BaseModel):
+    """How many of the ticked orders were still there to delete."""
+
+    deleted: int
 
 
 class OrderStatusUpdate(BaseModel):

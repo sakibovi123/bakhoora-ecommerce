@@ -143,6 +143,7 @@ export interface Product {
 export interface OrderListItem {
   id: string;
   order_number: string;
+  recipient_name: string;
   status: OrderStatus;
   payment_status: PaymentStatus;
   total: string;

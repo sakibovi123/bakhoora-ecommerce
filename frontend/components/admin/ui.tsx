@@ -336,13 +336,21 @@ export function Row({ children, onClick }: { children: ReactNode; onClick?: () =
       className={`border-b border-line/70 last:border-0 ${onClick ? "cursor-pointer" : ""}`}
     >
       {/* Hand each cell its column name rather than repeating it at every call
-          site, where it would drift from the header the first time one moves. */}
-      {Children.map(children, (child, index) =>
-        isValidElement<{ "data-label"?: string }>(child)
-          ? cloneElement(child, { "data-label": head[index] ?? "" })
-          : child,
-      )}
+          site, where it would drift from the header the first time one moves.
+          Counting only real cells matters: a conditional column written as
+          `{canEdit ? <Cell/> : null}` still occupies an index in Children.map,
+          which would shift every label after it by one on the stacked view. */}
+      {labelCells(children, head)}
     </tr>
+  );
+}
+
+function labelCells(children: ReactNode, head: string[]): ReactNode {
+  let column = 0;
+  return Children.map(children, (child) =>
+    isValidElement<{ "data-label"?: string }>(child)
+      ? cloneElement(child, { "data-label": head[column++] ?? "" })
+      : child,
   );
 }
 

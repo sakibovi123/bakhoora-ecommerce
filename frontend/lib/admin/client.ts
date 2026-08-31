@@ -409,6 +409,15 @@ export const adminApi = {
     input: { status?: OrderStatus; payment_status?: PaymentStatus; admin_note?: string },
   ) => call<Order>(`/admin/orders/${id}`, token, { method: "PATCH", body: body(input) }),
 
+  deleteOrder: (token: string, id: string) =>
+    call<void>(`/admin/orders/${id}`, token, { method: "DELETE" }),
+
+  deleteOrders: (token: string, ids: string[]) =>
+    call<{ deleted: number }>("/admin/orders/delete", token, {
+      method: "POST",
+      body: body({ ids }),
+    }),
+
   paymentMethods: () =>
     call<{ name: string; label: string; requires_prepayment: boolean }[]>(
       "/orders/payment-methods",

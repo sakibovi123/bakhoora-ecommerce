@@ -426,3 +426,121 @@ async def test_a_cancelled_order_takes_no_more_money(client, admin_token):
         headers=auth(admin_token),
     )
     assert response.status_code == 422, response.text
+
+
+# --- deleting --------------------------------------------------------------
+#
+# Deleting is for the row that should never have existed — the counter order
+# typed in twice. Cancelling is what a real order that fell through wants, so
+# the two have to differ in what they do to the shelf.
+
+async def test_deleting_an_order_puts_its_stock_back(client, admin_token):
+    product = await _product(client, admin_token, stock=10)
+    order = (await _create(client, admin_token, product=product)).json()
+
+    response = await client.delete(
+        f"/api/v1/admin/orders/{order['id']}", headers=auth(admin_token)
+    )
+    assert response.status_code == 204, response.text
+
+    gone = await client.get(
+        f"/api/v1/admin/orders/{order['id']}", headers=auth(admin_token)
+    )
+    assert gone.status_code == 404
+
+    listed = await client.get("/api/v1/admin/orders", headers=auth(admin_token))
+    assert listed.json()["total"] == 0
+
+    detail = await client.get(
+        f"/api/v1/admin/products/{product['id']}", headers=auth(admin_token)
+    )
+    assert detail.json()["variants"][0]["stock_quantity"] == 10
+
+
+async def test_deleting_a_delivered_order_leaves_the_shelf_alone(client, admin_token):
+    """The goods physically left the shop. Erasing the paperwork cannot bring
+    them back, so the stock stays where the delivery left it."""
+    product = await _product(client, admin_token, stock=10)
+    order = (await _create(client, admin_token, product=product)).json()
+    for status in ("confirmed", "processing", "shipped", "delivered"):
+        moved = await client.patch(
+            f"/api/v1/admin/orders/{order['id']}",
+            json={"status": status},
+            headers=auth(admin_token),
+        )
+        assert moved.status_code == 200, moved.text
+
+    response = await client.delete(
+        f"/api/v1/admin/orders/{order['id']}", headers=auth(admin_token)
+    )
+    assert response.status_code == 204, response.text
+
+    detail = await client.get(
+        f"/api/v1/admin/products/{product['id']}", headers=auth(admin_token)
+    )
+    assert detail.json()["variants"][0]["stock_quantity"] == 8
+
+
+async def test_deleting_a_cancelled_order_does_not_restock_twice(client, admin_token):
+    product = await _product(client, admin_token, stock=10)
+    order = (await _create(client, admin_token, product=product)).json()
+    cancelled = await client.patch(
+        f"/api/v1/admin/orders/{order['id']}",
+        json={"status": "cancelled"},
+        headers=auth(admin_token),
+    )
+    assert cancelled.status_code == 200, cancelled.text
+
+    response = await client.delete(
+        f"/api/v1/admin/orders/{order['id']}", headers=auth(admin_token)
+    )
+    assert response.status_code == 204, response.text
+
+    detail = await client.get(
+        f"/api/v1/admin/products/{product['id']}", headers=auth(admin_token)
+    )
+    assert detail.json()["variants"][0]["stock_quantity"] == 10
+
+
+async def test_several_ticked_rows_go_in_one_request(client, admin_token):
+    product = await _product(client, admin_token, stock=10)
+    first = (await _create(client, admin_token, product=product)).json()
+    second = (await _create(client, admin_token, product=product)).json()
+
+    response = await client.post(
+        "/api/v1/admin/orders/delete",
+        json={"ids": [first["id"], second["id"]]},
+        headers=auth(admin_token),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["deleted"] == 2
+
+    listed = await client.get("/api/v1/admin/orders", headers=auth(admin_token))
+    assert listed.json()["total"] == 0
+
+    detail = await client.get(
+        f"/api/v1/admin/products/{product['id']}", headers=auth(admin_token)
+    )
+    assert detail.json()["variants"][0]["stock_quantity"] == 10
+
+
+async def test_an_id_that_is_already_gone_does_not_fail_the_batch(client, admin_token):
+    """Two people tidying up the same duplicates. The second one's request must
+    still delete what is left rather than erroring with nothing done."""
+    product = await _product(client, admin_token, stock=10)
+    order = (await _create(client, admin_token, product=product)).json()
+
+    response = await client.post(
+        "/api/v1/admin/orders/delete",
+        json={"ids": [order["id"], "11111111-1111-4111-8111-111111111111"]},
+        headers=auth(admin_token),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["deleted"] == 1
+
+
+async def test_an_empty_selection_is_refused(client, admin_token):
+    response = await client.post(
+        "/api/v1/admin/orders/delete", json={"ids": []}, headers=auth(admin_token)
+    )
+    assert response.status_code == 422, response.text

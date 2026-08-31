@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core import cache
 from app.core.config import settings
 from app.core.exceptions import (
     BusinessRuleError,
@@ -37,6 +38,16 @@ from app.schemas.order import (
 from app.services import cart_service, settings_service, user_service
 
 RESTOCKING_STATUSES = {OrderStatus.CANCELLED, OrderStatus.REFUNDED}
+
+# Statuses in which the shop is still holding this order's stock, so deleting it
+# has to hand the stock back. The two in RESTOCKING_STATUSES already gave it
+# back; SHIPPED and DELIVERED sent the goods out of the building, and deleting
+# the paperwork must not conjure them back onto the shelf.
+STOCK_HELD_STATUSES = {
+    OrderStatus.PENDING,
+    OrderStatus.CONFIRMED,
+    OrderStatus.PROCESSING,
+}
 
 # Money is only counted once an order is past PENDING and not reversed.
 REVENUE_STATUSES = (
@@ -385,6 +396,55 @@ async def cancel_order(db: AsyncSession, order_id: uuid.UUID, user: User) -> Ord
     order.status = OrderStatus.CANCELLED
     await db.commit()
     return await get_order(db, order_id)
+
+
+async def _erase(db: AsyncSession, order: Order) -> None:
+    """Drop one order, uncommitted. Items and payments go with it via the FK
+    cascade; stock the shop is still holding for it goes back on the shelf."""
+    if order.status in STOCK_HELD_STATUSES:
+        await _restock(db, order)
+    await db.delete(order)
+
+
+def _after_delete() -> None:
+    # The ORM listener clears ORDERS and REPORTS for any order write, but not
+    # the archive shelf, on the reasoning that a new order can only land in a
+    # range that is still open. A deletion breaks that: it can take revenue out
+    # of a month that closed weeks ago, so the archived reports have to go too.
+    cache.invalidate(cache.REPORTS_ARCHIVE)
+
+
+async def delete_order(db: AsyncSession, order_id: uuid.UUID) -> None:
+    """Erase an order and everything hanging off it.
+
+    This is for a mistake at the desk — a duplicate manual order, a test row —
+    not for an order that fell through. An order the customer walked away from
+    should be *cancelled*: that keeps the record and the reason. Deleting takes
+    the order out of every report and out of the customer's history as though
+    it had never been placed, which is why the panel asks twice.
+    """
+    order = await get_order(db, order_id)
+    await _erase(db, order)
+    await db.commit()
+    _after_delete()
+
+
+async def delete_orders(db: AsyncSession, order_ids: list[uuid.UUID]) -> int:
+    """The same thing for a batch of ticked rows, in one transaction.
+
+    Ids that are already gone are skipped rather than failing the batch: two
+    people clearing up the same duplicates should not leave the second one
+    staring at an error with nothing deleted. The count that comes back is what
+    actually went, so the panel can say so.
+    """
+    orders = list(
+        await db.scalars(select(Order).where(Order.id.in_(order_ids)))
+    )
+    for order in orders:
+        await _erase(db, order)
+    await db.commit()
+    _after_delete()
+    return len(orders)
 
 
 async def update_status(

@@ -1,17 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import {
   IconChevronRight,
   IconFilter,
   IconPlus,
   IconSearch,
+  IconSpinner,
+  IconTrash,
 } from "@/components/admin/icons";
+import { useConfirm } from "@/components/admin/dialog";
 import { Dropdown } from "@/components/admin/dropdown";
 import { Require } from "@/components/admin/require";
+import { useToast } from "@/components/admin/toast";
 import {
+  Button,
   Cell,
   Empty,
   ErrorNote,
@@ -25,7 +30,7 @@ import {
   Spinner,
   Table,
 } from "@/components/admin/ui";
-import { adminApi } from "@/lib/admin/client";
+import { ApiError, adminApi } from "@/lib/admin/client";
 import {
   ORDER_STATUS_DOT,
   ORDER_STATUS_TONE,
@@ -35,6 +40,7 @@ import {
   money,
   titleCase,
 } from "@/lib/admin/format";
+import { useAuth } from "@/lib/auth";
 import type { OrderStatus } from "@/lib/admin/types";
 import { useResource } from "@/lib/admin/use-resource";
 
@@ -62,12 +68,77 @@ function OrdersScreen() {
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
 
+  const { token, can } = useAuth();
+  const { notify } = useToast();
+  const confirm = useConfirm();
+  const canManage = can("orders", "manage");
+
   const load = useCallback(
     (token: string) =>
       adminApi.orders(token, { page, size: 20, status: status || null, search: query || null }),
     [page, status, query],
   );
   const { data, error, loading, reload } = useResource(load, [page, status, query]);
+
+  // Ticks are per page of results. Carrying them across a page turn or a
+  // filter change would mean deleting rows the operator can no longer see.
+  const [picked, setPicked] = useState<string[]>([]);
+  const [deleting, setDeleting] = useState(false);
+  useEffect(() => setPicked([]), [page, status, query]);
+
+  const rows = data?.items ?? [];
+  const allPicked = rows.length > 0 && picked.length === rows.length;
+
+  function toggle(id: string) {
+    setPicked((current) =>
+      current.includes(id) ? current.filter((value) => value !== id) : [...current, id],
+    );
+  }
+
+  async function removePicked() {
+    if (!token || picked.length === 0) return;
+    const chosen = rows.filter((order) => picked.includes(order.id));
+    const numbers = chosen.map((order) => order.order_number);
+    const many = chosen.length > 1;
+    const them = many ? "them" : "it";
+    const sure = await confirm({
+      title: many ? `Delete ${chosen.length} orders?` : `Delete ${numbers[0]}?`,
+      body: (
+        <>
+          <p>
+            {`${many ? `These ${chosen.length} orders` : "This order"} and everything ` +
+              `recorded against ${them} — items and payments — will be erased and stop ` +
+              `counting in the sales reports. Stock still reserved goes back on the shelf. ` +
+              `To keep the record instead, move ${them} to Cancelled.`}
+          </p>
+          {/* Naming the rows is the last chance to notice a mis-tick, so the
+              dialog prints them rather than only a count. */}
+          <p className="mt-3 font-mono text-xs leading-relaxed text-muted">
+            {numbers.slice(0, 8).join(", ")}
+            {numbers.length > 8 ? ` and ${numbers.length - 8} more` : ""}
+          </p>
+        </>
+      ),
+      confirmLabel: many ? `Delete ${chosen.length} orders` : "Delete order",
+      tone: "danger",
+    });
+    if (!sure) return;
+
+    setDeleting(true);
+    try {
+      const { deleted } = await adminApi.deleteOrders(token, picked);
+      notify(deleted === 1 ? "1 order deleted" : `${deleted} orders deleted`);
+      setPicked([]);
+      // The last row on a page that is not the first: stepping back beats
+      // landing on an empty page with a Previous button as the only way out.
+      if (deleted >= rows.length && page > 1) setPage(page - 1);
+      else reload();
+    } catch (cause) {
+      notify(cause instanceof ApiError ? cause.message : "Could not delete", "error");
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -143,9 +214,73 @@ function OrdersScreen() {
           </div>
         ) : (
           <>
-            <Table head={["Order", "Placed", "Status", "Payment", "Total", "Due", ""]}>
+            {/* Ticking rows is a manager's job — a read-only role gets the list
+                without a column of checkboxes that lead nowhere. */}
+            {canManage ? (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-3 border-b border-line px-4 py-3">
+                <label className="flex cursor-pointer items-center gap-2.5">
+                  <input
+                    type="checkbox"
+                    className="size-5 accent-[var(--color-ink)] md:size-4"
+                    checked={allPicked}
+                    ref={(node) => {
+                      // Half a page ticked reads as neither on nor off.
+                      if (node) node.indeterminate = picked.length > 0 && !allPicked;
+                    }}
+                    onChange={(event) =>
+                      setPicked(event.target.checked ? rows.map((order) => order.id) : [])
+                    }
+                    aria-label="Select every order on this page"
+                  />
+                  <span className="label text-muted">
+                    {picked.length ? `${picked.length} selected` : "Select all"}
+                  </span>
+                </label>
+                {picked.length ? (
+                  <div className="flex items-center gap-3">
+                    <Button tone="danger" onClick={removePicked} disabled={deleting}>
+                      {deleting ? <IconSpinner /> : <IconTrash />}
+                      {deleting ? "Deleting…" : "Delete selected"}
+                    </Button>
+                    <button
+                      type="button"
+                      className="label text-muted hover:text-ink"
+                      onClick={() => setPicked([])}
+                      disabled={deleting}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            <Table
+              head={[
+                ...(canManage ? [""] : []),
+                "Order",
+                "Customer",
+                "Placed",
+                "Status",
+                "Payment",
+                "Total",
+                "Due",
+                "",
+              ]}
+            >
               {data.items.map((order) => (
                 <Row key={order.id}>
+                  {canManage ? (
+                    <Cell className="w-10">
+                      <input
+                        type="checkbox"
+                        className="size-5 accent-[var(--color-ink)] md:size-4"
+                        checked={picked.includes(order.id)}
+                        onChange={() => toggle(order.id)}
+                        aria-label={`Select ${order.order_number}`}
+                      />
+                    </Cell>
+                  ) : null}
                   <Cell>
                     <Link
                       href={`/admin/orders/${order.id}`}
@@ -154,6 +289,7 @@ function OrdersScreen() {
                       {order.order_number}
                     </Link>
                   </Cell>
+                  <Cell className="text-ink">{order.recipient_name}</Cell>
                   <Cell className="whitespace-nowrap text-muted">
                     {dateTime(order.created_at)}
                   </Cell>

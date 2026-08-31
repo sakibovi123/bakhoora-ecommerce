@@ -40,6 +40,8 @@ from app.schemas.category import CategoryOut
 from app.schemas.common import Page
 from app.schemas.order import (
     ManualOrderRequest,
+    OrderBulkDelete,
+    OrderBulkDeleteResult,
     OrderListItem,
     OrderOut,
     OrderStatusUpdate,
@@ -268,6 +270,20 @@ async def create_order(data: ManualOrderRequest, db: DbSession, _: OrdersManager
     return await order_service.create_manual(db, data)
 
 
+@router.post("/orders/delete", response_model=OrderBulkDeleteResult)
+async def delete_orders(
+    data: OrderBulkDelete, db: DbSession, _: OrdersManager
+) -> OrderBulkDeleteResult:
+    """Erase every order ticked in the list, in one transaction.
+
+    Declared above `/orders/{order_id}` so "delete" is read as the literal path
+    it is. A POST rather than a DELETE because the ids travel in a body, which
+    plenty of clients and proxies drop from a DELETE.
+    """
+    deleted = await order_service.delete_orders(db, data.ids)
+    return OrderBulkDeleteResult(deleted=deleted)
+
+
 @router.get("/orders/{order_id}", response_model=OrderOut)
 async def get_order(order_id: uuid.UUID, db: DbSession, _: OrdersViewer) -> Order:
     return await order_service.get_order(db, order_id)
@@ -278,6 +294,17 @@ async def update_order(
     order_id: uuid.UUID, data: OrderStatusUpdate, db: DbSession, _: OrdersManager
 ) -> Order:
     return await order_service.update_status(db, order_id, data)
+
+
+@router.delete("/orders/{order_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_order(order_id: uuid.UUID, db: DbSession, _: OrdersManager) -> None:
+    """Erase an order typed in by mistake, along with its items and payments.
+
+    Cancelling is what an order the customer backed out of wants; this is for
+    the ones that should never have existed. Stock still reserved for it goes
+    back on the shelf.
+    """
+    await order_service.delete_order(db, order_id)
 
 
 @router.post(
