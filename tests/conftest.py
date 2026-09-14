@@ -158,3 +158,47 @@ async def role_id(session_factory, slug: str) -> str:
     async with session_factory() as session:
         role = await session.scalar(select(Role).where(Role.slug == slug))
         return str(role.id)
+
+
+async def staff_account(client, admin_token, *, name, permissions, email=None, is_staff=True):
+    """Create a role, put a fresh account on it, and return (role, token).
+
+    Shared because more than one suite needs to ask "what can a member of
+    staff who is *not* the owner actually do here" — which is the only way
+    to test a guard that is deliberately narrower than a menu permission.
+    """
+    created = await client.post(
+        "/api/v1/admin/roles",
+        json={"name": name, "is_staff": is_staff, "permissions": permissions},
+        headers=auth(admin_token),
+    )
+    assert created.status_code == 201, created.text
+    role = created.json()
+
+    address = email or f"{role['slug']}@test.dev"
+    await client.post(
+        "/api/v1/auth/register",
+        json={"email": address, "password": "Password123", "full_name": name},
+    )
+    me = (
+        await client.post(
+            "/api/v1/auth/login", json={"email": address, "password": "Password123"}
+        )
+    ).json()["access_token"]
+    user_id = (await client.get("/api/v1/auth/me", headers=auth(me))).json()["id"]
+
+    assigned = await client.patch(
+        f"/api/v1/admin/users/{user_id}",
+        json={"role_id": role["id"]},
+        headers=auth(admin_token),
+    )
+    assert assigned.status_code == 200, assigned.text
+
+    # Re-login so the token belongs to the account in its new role.
+    token = (
+        await client.post(
+            "/api/v1/auth/login", json={"email": address, "password": "Password123"}
+        )
+    ).json()["access_token"]
+    return role, token
+

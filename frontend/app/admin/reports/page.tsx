@@ -99,7 +99,7 @@ function ReportsScreen() {
         title="Sales reports"
         subtitle={
           data
-            ? `${plainDate(data.start_date)} — ${plainDate(data.end_date)} · days end at midnight ${data.timezone} · revenue on order date, expenses on payment date`
+            ? `${plainDate(data.start_date)} — ${plainDate(data.end_date)} · days end at midnight ${data.timezone} · revenue on order date, expenses on bill date`
             : "Daily and monthly takings."
         }
         actions={<ExportButton granularity={granularity} start={start} end={end} />}
@@ -338,11 +338,17 @@ function ReportBody({ report }: { report: SalesReport }) {
           <StatTile
             tone="amber"
             icon={IconExpenses}
-            label="Expenses paid"
+            /* "Billed", not "paid": this is the full cost of what was bought in
+               the range, whether or not the supplier has been settled. */
+            label="Expenses billed"
             value={money(summary.expenses)}
-            note={`${expense_breakdown.length} categor${
-              expense_breakdown.length === 1 ? "y" : "ies"
-            } used`}
+            note={
+              Number.parseFloat(summary.outstanding) > 0
+                ? `${money(summary.outstanding)} of it still owed`
+                : `${expense_breakdown.length} categor${
+                    expense_breakdown.length === 1 ? "y" : "ies"
+                  } used`
+            }
           />
           <StatTile
             hero
@@ -410,10 +416,12 @@ function ReportBody({ report }: { report: SalesReport }) {
           {/* Said plainly, because both of these make a month read oddly and
               neither is a bug. */}
           <p className="mt-6 border-t border-line pt-4 text-xs leading-relaxed text-muted">
-            Net profit is net revenue less expenses paid in this range. Revenue counts an order
-            once it is confirmed; an expense counts on the day it was paid. Stock bought in bulk
-            lands entirely in the month it was paid for, not in the months it sells — so a large
-            purchase can push a profitable month into a loss.
+            Net profit is net revenue less every expense billed in this range. Revenue counts an
+            order once it is confirmed; an expense counts on the date of its bill, and for the
+            whole bill — a part-paid supplier still costs what was bought, so the unpaid part is
+            in this figure too and shows separately as still owed. Stock bought in bulk lands
+            entirely in the month it was bought, not in the months it sells — so a large purchase
+            can push a profitable month into a loss.
           </p>
         </Panel>
       </div>

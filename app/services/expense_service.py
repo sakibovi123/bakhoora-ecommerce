@@ -9,7 +9,7 @@ from sqlalchemy import Select, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.exceptions import ConflictError, NotFoundError
+from app.core.exceptions import BusinessRuleError, ConflictError, NotFoundError
 from app.models.expense import Expense, ExpenseCategory
 from app.schemas.expense import (
     ExpenseCategoryCreate,
@@ -18,6 +18,7 @@ from app.schemas.expense import (
     ExpenseUpdate,
 )
 from app.utils.slug import unique_slug
+from app.utils.uploads import delete_stored
 
 SortKey = Literal["newest", "oldest", "amount_desc", "amount_asc"]
 
@@ -128,12 +129,12 @@ async def list_expenses(
     start: date | None = None,
     end: date | None = None,
     sort: SortKey = "newest",
-) -> tuple[list[Expense], int, Decimal]:
-    """A page of expenses, the unpaginated count, and the unpaginated total.
+) -> tuple[list[Expense], int, Decimal, Decimal]:
+    """A page of expenses, the unpaginated count, total, and amount still owed.
 
-    The total is what the operator is actually looking for — "what did I spend
-    this month" — and paginating it away would make the figure change as they
-    clicked through pages.
+    The totals are what the operator is actually looking for — "what did I spend
+    this month, and what do I still owe on it" — and paginating them away would
+    make the figures change as they clicked through pages.
     """
     stmt = _filters(
         select(Expense).options(selectinload(Expense.category)),
@@ -144,15 +145,27 @@ async def list_expenses(
     )
 
     total = await db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    spent = await db.scalar(
-        _filters(
-            select(func.coalesce(func.sum(Expense.amount), 0)),
-            search=search,
-            category_id=category_id,
-            start=start,
-            end=end,
+    # Both figures in one pass. GREATEST floors the per-row due at zero so a
+    # single overpaid bill cannot quietly cancel out what is owed on the others.
+    money = (
+        await db.execute(
+            _filters(
+                select(
+                    func.coalesce(func.sum(Expense.amount), 0).label("spent"),
+                    func.coalesce(
+                        func.sum(
+                            func.greatest(Expense.amount - Expense.amount_paid, 0)
+                        ),
+                        0,
+                    ).label("owed"),
+                ),
+                search=search,
+                category_id=category_id,
+                start=start,
+                end=end,
+            )
         )
-    )
+    ).one()
 
     orders = {
         "newest": (Expense.spent_on.desc(), Expense.created_at.desc()),
@@ -164,7 +177,12 @@ async def list_expenses(
     rows = await db.scalars(
         stmt.order_by(*orders).offset((page - 1) * size).limit(size)
     )
-    return list(rows), total, Decimal(spent or 0).quantize(Decimal("0.01"))
+    return (
+        list(rows),
+        total,
+        Decimal(money.spent or 0).quantize(Decimal("0.01")),
+        Decimal(money.owed or 0).quantize(Decimal("0.01")),
+    )
 
 
 async def get_expense(db: AsyncSession, expense_id: uuid.UUID) -> Expense:
@@ -192,7 +210,12 @@ async def create_expense(db: AsyncSession, data: ExpenseCreate) -> Expense:
     # Resolve the category first so an unknown id is a 404 naming the category,
     # not a foreign-key violation.
     await get_category(db, data.category_id)
-    expense = Expense(**data.model_dump())
+    values = data.model_dump()
+    # An omitted paid figure means the bill was settled on the spot, which is
+    # most of them. A caller that means "nothing has been paid yet" sends 0.
+    if values.get("amount_paid") is None:
+        values["amount_paid"] = values["amount"]
+    expense = Expense(**values)
     db.add(expense)
     await db.commit()
     return await get_expense(db, expense.id)
@@ -205,6 +228,19 @@ async def update_expense(
     values = data.model_dump(exclude_unset=True)
     if values.get("category_id"):
         await get_category(db, values["category_id"])
+
+    # Checked here rather than on the schema because a PATCH may carry either
+    # figure alone: lowering a total below what is already recorded as paid is
+    # only visible once the change is merged onto the stored row. Left
+    # unchecked, the pair would produce a negative due everywhere it is shown.
+    amount = values.get("amount", expense.amount)
+    paid = values.get("amount_paid", expense.amount_paid)
+    if paid > amount:
+        raise BusinessRuleError(
+            f"{paid:,.2f} is already recorded as paid against this bill, so the "
+            f"total cannot be {amount:,.2f}. Change the paid amount first."
+        )
+
     for field, value in values.items():
         setattr(expense, field, value)
     await db.commit()
@@ -213,8 +249,14 @@ async def update_expense(
 
 async def delete_expense(db: AsyncSession, expense_id: uuid.UUID) -> None:
     expense = await get_expense(db, expense_id)
+    receipt = expense.receipt_url
     await db.delete(expense)
     await db.commit()
+    # Only once the row is actually gone. Deleting the file first would leave an
+    # expense pointing at nothing if the commit failed, and an orphaned image is
+    # the cheaper of the two mistakes.
+    if receipt:
+        delete_stored(receipt)
 
 
 # --- report aggregate -------------------------------------------------------
@@ -223,6 +265,10 @@ async def delete_expense(db: AsyncSession, expense_id: uuid.UUID) -> None:
 class PeriodTotal(NamedTuple):
     amount: Decimal
     entries: int
+    # Of `amount`, how much has not actually been handed over yet. Carried per
+    # period rather than summed at the end so a monthly report can show which
+    # month the unpaid bills are sitting in.
+    outstanding: Decimal
 
 
 class CategoryTotal(NamedTuple):
@@ -265,6 +311,9 @@ async def totals(
     src = (
         select(
             Expense.amount.label("amount"),
+            # Floored at zero per row: one overpaid bill must not cancel out
+            # what is genuinely owed on the others.
+            func.greatest(Expense.amount - Expense.amount_paid, 0).label("due"),
             Expense.category_id.label("category_id"),
             period,
             in_range.label("in_range"),
@@ -288,6 +337,9 @@ async def totals(
                 func.sum(src.c.amount).filter(src.c.in_range), 0
             ).label("amount_in_range"),
             func.count().filter(src.c.in_range).label("entries_in_range"),
+            func.coalesce(
+                func.sum(src.c.due).filter(src.c.in_range), 0
+            ).label("due_in_range"),
         )
         .select_from(src)
         .group_by(func.grouping_sets(src.c.period, src.c.category_id))
@@ -305,6 +357,7 @@ async def totals(
             by_period[row.period.date()] = PeriodTotal(
                 amount=Decimal(row.amount_all or 0).quantize(Decimal("0.01")),
                 entries=row.entries_all,
+                outstanding=Decimal(row.due_in_range or 0).quantize(Decimal("0.01")),
             )
         elif row.entries_in_range:  # a category row, spend inside the range
             by_category.append(

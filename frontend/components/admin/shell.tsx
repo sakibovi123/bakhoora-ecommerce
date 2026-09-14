@@ -26,8 +26,10 @@ const NAV: { href: string; label: string; menu: MenuKey; exact?: boolean }[] = [
   { href: "/admin/orders", label: "Orders", menu: "orders" },
   { href: "/admin/products", label: "Products", menu: "products" },
   { href: "/admin/categories", label: "Categories", menu: "categories" },
+  { href: "/admin/combos", label: "Combos", menu: "combos" },
   { href: "/admin/customers", label: "Customers", menu: "customers" },
   { href: "/admin/roles", label: "Roles & access", menu: "roles" },
+  { href: "/admin/pricing", label: "Pricing", menu: "pricing" },
   { href: "/admin/expenses", label: "Expenses", menu: "expenses" },
   { href: "/admin/settings", label: "Settings", menu: "settings" },
 ];

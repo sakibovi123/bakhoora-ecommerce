@@ -132,6 +132,13 @@ function InvoiceScreen() {
                 <td className="py-2.5 pr-3 text-ink">
                   {item.product_name}
                   <span className="text-muted"> · {item.variant_name}</span>
+                  {/* A combo prints its contents: an invoice that says only
+                      "Everyday Fresh 5" cannot be checked against the parcel. */}
+                  {item.components.length ? (
+                    <span className="block text-xs text-muted">
+                      {item.components.map((part) => part.product_name).join(", ")}
+                    </span>
+                  ) : null}
                 </td>
                 <td className="py-2.5 pr-3 font-mono text-xs text-muted">{item.sku}</td>
                 <td className="py-2.5 text-right">{moneyExact(item.unit_price)}</td>

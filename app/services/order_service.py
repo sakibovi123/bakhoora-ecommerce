@@ -17,10 +17,12 @@ from app.core.exceptions import (
     PermissionDeniedError,
 )
 from app.models.cart import CartItem
+from app.models.combo import Combo, ComboItem, ComboSize
 from app.models.order import (
     TERMINAL_PAYMENT_STATUSES,
     Order,
     OrderItem,
+    OrderItemComponent,
     OrderStatus,
     PaymentStatus,
 )
@@ -31,11 +33,14 @@ from app.payments import get_provider
 from app.payments.base import PaymentIntent
 from app.schemas.order import (
     CheckoutRequest,
+    ManualOrderLine,
     ManualOrderRequest,
+    OrderEditRequest,
     OrderStatusUpdate,
     PaymentRecord,
 )
 from app.services import cart_service, settings_service, user_service
+from app.utils.sizes import combo_size_label, size_label
 
 RESTOCKING_STATUSES = {OrderStatus.CANCELLED, OrderStatus.REFUNDED}
 
@@ -92,6 +97,133 @@ async def _resolve_address(db: AsyncSession, user: User, data: CheckoutRequest) 
     return payload
 
 
+# --- selling a combo -------------------------------------------------------
+#
+# A combo is one priced line that reserves several bottles. Both the storefront
+# checkout and the counter order build one the same way, through the three
+# helpers below, so a bundle sold over the phone reserves stock and snapshots
+# its contents exactly as one sold online does.
+
+
+_LOAD_COMBO_SIZE = (
+    selectinload(ComboSize.combo)
+    .selectinload(Combo.items)
+    .selectinload(ComboItem.product)
+    .selectinload(Product.images),
+)
+
+
+async def _load_combo_sizes(
+    db: AsyncSession, size_ids: set[uuid.UUID]
+) -> dict[uuid.UUID, ComboSize]:
+    if not size_ids:
+        return {}
+    rows = await db.scalars(
+        select(ComboSize).where(ComboSize.id.in_(size_ids)).options(*_LOAD_COMBO_SIZE)
+    )
+    return {size.id: size for size in rows}
+
+
+async def _bottle_ids(db: AsyncSession, sizes: list[ComboSize]) -> set[uuid.UUID]:
+    """Which variants these combos will need, so they can be locked with the rest.
+
+    Read without a lock on purpose: this only decides *what* to lock. The row
+    that comes back from the locking select below is the one the arithmetic uses,
+    and a variant that disappeared in between is simply absent from it and fails
+    the same check a missing one always did.
+    """
+    if not sizes:
+        return set()
+    rows = await db.scalars(
+        select(ProductVariant.id).where(
+            ProductVariant.product_id.in_(
+                {entry.product_id for size in sizes for entry in size.combo.items}
+            ),
+            ProductVariant.size_ml.in_({size.size_ml for size in sizes}),
+        )
+    )
+    return set(rows)
+
+
+def _by_product_size(
+    variants: dict[uuid.UUID, ProductVariant],
+) -> dict[tuple[uuid.UUID, int], ProductVariant]:
+    """The locked variants re-keyed the way a combo asks for them."""
+    return {(variant.product_id, variant.size_ml): variant for variant in variants.values()}
+
+
+def _take_combo(
+    size: ComboSize,
+    bottles: dict[tuple[uuid.UUID, int], ProductVariant],
+    quantity: int,
+    unit_price: Decimal,
+) -> tuple[OrderItem, Decimal]:
+    """Reserve every bottle in one combo and build the line that records it.
+
+    Stock comes off the components; the money sits on the parent line alone.
+    The components are snapshotted here rather than looked up later because the
+    campaign can be edited afterwards, and a cancellation has to put back what
+    actually went out, not what the combo holds today.
+    """
+    combo = size.combo
+    if not combo.items:
+        raise BusinessRuleError(f"“{combo.name}” has no perfumes in it")
+
+    components: list[OrderItemComponent] = []
+    for entry in combo.items:
+        variant = bottles.get((entry.product_id, size.size_ml))
+        # `entry.product` rather than `variant.product`: they are the same row,
+        # and the combo's copy is already loaded. Reaching through the variant
+        # would lazy-load inside async and blow up on the greenlet, because the
+        # locking select deliberately fetches nothing but the variants.
+        if variant is None or not variant.is_active or not entry.product.is_active:
+            raise BusinessRuleError(
+                f"{entry.product.name} is not available in {size_label(size.size_ml)}, "
+                f"so “{combo.name}” cannot be made up"
+            )
+        if variant.stock_quantity < quantity:
+            raise OutOfStockError(
+                f"Only {variant.stock_quantity} left of {entry.product.name} "
+                f"({variant.name}), which “{combo.name}” needs"
+            )
+        variant.stock_quantity -= quantity
+        components.append(
+            OrderItemComponent(
+                variant_id=variant.id,
+                product_name=entry.product.name,
+                variant_name=variant.name,
+                sku=variant.sku,
+                position=entry.position,
+                quantity=1,
+            )
+        )
+
+    line_total = unit_price * quantity
+    thumbnail = combo.image_url or next(
+        (
+            cart_service.primary_image(entry.product)
+            for entry in combo.items
+            if entry.product.images
+        ),
+        None,
+    )
+    return (
+        OrderItem(
+            variant_id=None,
+            combo_id=combo.id,
+            product_name=combo.name,
+            variant_name=combo_size_label(len(combo.items), size.size_ml),
+            sku=size.sku,
+            image_url=thumbnail,
+            unit_price=unit_price,
+            quantity=quantity,
+            line_total=line_total,
+            components=components,
+        ),
+        line_total,
+    )
+
+
 async def checkout(
     db: AsyncSession, user: User, data: CheckoutRequest
 ) -> tuple[Order, PaymentIntent]:
@@ -103,18 +235,35 @@ async def checkout(
     if not items:
         raise BusinessRuleError("Your cart is empty")
 
-    # Lock every variant in the cart for the length of this transaction.
+    # A combo line reserves the bottles inside it, so those have to be locked
+    # alongside the ones the basket names directly — otherwise two people could
+    # each take the last Bleu de Chanel, one on its own and one inside a bundle.
+    sizes = await _load_combo_sizes(
+        db, {item.combo_size_id for item in items if item.combo_size_id is not None}
+    )
+    wanted = {item.variant_id for item in items if item.variant_id is not None}
+    wanted |= await _bottle_ids(db, list(sizes.values()))
+
+    # Lock every variant this order touches for the length of the transaction.
     locked = await db.scalars(
-        select(ProductVariant)
-        .where(ProductVariant.id.in_([item.variant_id for item in items]))
-        .with_for_update()
+        select(ProductVariant).where(ProductVariant.id.in_(wanted)).with_for_update()
     )
     variants = {variant.id: variant for variant in locked}
+    bottles = _by_product_size(variants)
 
     subtotal = Decimal("0.00")
     order_items: list[OrderItem] = []
 
     for item in items:
+        if item.combo_size_id is not None:
+            size = sizes.get(item.combo_size_id)
+            if size is None or not size.is_active or not size.combo.is_active:
+                raise BusinessRuleError("A combo in your cart is no longer available")
+            line, line_total = _take_combo(size, bottles, item.quantity, size.price)
+            order_items.append(line)
+            subtotal += line_total
+            continue
+
         variant = variants.get(item.variant_id)
         if variant is None or not variant.is_active:
             raise BusinessRuleError("An item in your cart is no longer available")
@@ -182,32 +331,40 @@ async def checkout(
     return await get_order(db, order.id), intent
 
 
-async def create_manual(db: AsyncSession, data: ManualOrderRequest) -> Order:
-    """Create an order the shop took by phone or at the counter.
+async def _reserve_lines(
+    db: AsyncSession, lines: list[ManualOrderLine]
+) -> tuple[list[OrderItem], Decimal]:
+    """Turn requested lines into snapshotted order items, taking the stock.
 
-    Deliberately built the same way `checkout` builds one — same row-level lock,
-    same stock decrement, same snapshotted line items — so it is indistinguishable
-    downstream. That is what makes it show up in the dashboard, the best sellers,
-    the customer's history and the low-stock list without any of them knowing
-    where it came from.
+    Shared by `create_manual` and `edit_order` so the two cannot drift: an edit
+    that priced or reserved differently from a create would be a quiet way for
+    the same order to mean two things. Rows are locked FOR UPDATE and the
+    decrements happen here, so a caller that raises afterwards rolls the whole
+    reservation back with the transaction.
+
+    An edit must put the order's current holding back *and flush it* before
+    calling this, or the stock check below reads the pre-restock figure and
+    refuses an edit the shelf can actually satisfy.
     """
-    provider = get_provider(data.payment_method)
+    sizes = await _load_combo_sizes(
+        db, {line.combo_size_id for line in lines if line.combo_size_id is not None}
+    )
+    unknown = {line.combo_size_id for line in lines if line.combo_size_id} - sizes.keys()
+    if unknown:
+        raise NotFoundError(f"{len(unknown)} of these combos no longer exist")
 
-    if data.user_id is not None:
-        customer = await db.get(User, data.user_id)
-        if customer is None:
-            raise NotFoundError("That customer account no longer exists")
-
-    wanted = {line.variant_id: line.quantity for line in data.items}
+    wanted = {line.variant_id for line in lines if line.variant_id is not None}
+    to_lock = wanted | await _bottle_ids(db, list(sizes.values()))
     locked = await db.scalars(
         select(ProductVariant)
-        .where(ProductVariant.id.in_(wanted))
+        .where(ProductVariant.id.in_(to_lock))
         .options(selectinload(ProductVariant.product).selectinload(Product.images))
         .with_for_update()
     )
     variants = {variant.id: variant for variant in locked}
+    bottles = _by_product_size(variants)
 
-    missing = wanted.keys() - variants.keys()
+    missing = wanted - variants.keys()
     if missing:
         raise NotFoundError(f"{len(missing)} of these sizes no longer exist")
 
@@ -215,7 +372,17 @@ async def create_manual(db: AsyncSession, data: ManualOrderRequest) -> Order:
     order_items: list[OrderItem] = []
 
     # Keep the caller's order so the invoice reads the way it was entered.
-    for line in data.items:
+    for line in lines:
+        if line.combo_size_id is not None:
+            size = sizes[line.combo_size_id]
+            # A combo at the counter is haggled like anything else; the listed
+            # campaign price is only the default.
+            unit_price = line.unit_price if line.unit_price is not None else size.price
+            item, line_total = _take_combo(size, bottles, line.quantity, unit_price)
+            order_items.append(item)
+            subtotal += line_total
+            continue
+
         variant = variants[line.variant_id]
         if not variant.is_active or not variant.product.is_active:
             raise BusinessRuleError(
@@ -245,6 +412,27 @@ async def create_manual(db: AsyncSession, data: ManualOrderRequest) -> Order:
                 line_total=line_total,
             )
         )
+
+    return order_items, subtotal
+
+
+async def create_manual(db: AsyncSession, data: ManualOrderRequest) -> Order:
+    """Create an order the shop took by phone or at the counter.
+
+    Deliberately built the same way `checkout` builds one — same row-level lock,
+    same stock decrement, same snapshotted line items — so it is indistinguishable
+    downstream. That is what makes it show up in the dashboard, the best sellers,
+    the customer's history and the low-stock list without any of them knowing
+    where it came from.
+    """
+    provider = get_provider(data.payment_method)
+
+    if data.user_id is not None:
+        customer = await db.get(User, data.user_id)
+        if customer is None:
+            raise NotFoundError("That customer account no longer exists")
+
+    order_items, subtotal = await _reserve_lines(db, data.items)
 
     shop = await settings_service.get(db)
     shipping_fee = (
@@ -380,12 +568,28 @@ async def list_orders(
 
 
 async def _restock(db: AsyncSession, order: Order) -> None:
+    """Put back everything this order is still holding.
+
+    A combo line has no variant of its own — the bottles it reserved are on its
+    `components`, snapshotted at the time — so it is restocked through those.
+    Either way the quantity put back is what actually left: a line for two
+    combos of five oils returns two of each bottle.
+    """
     for item in order.items:
-        if item.variant_id is None:
+        if item.components:
+            for component in item.components:
+                await _return_stock(db, component.variant_id, item.quantity * component.quantity)
             continue
-        variant = await db.get(ProductVariant, item.variant_id, with_for_update=True)
-        if variant is not None:
-            variant.stock_quantity += item.quantity
+        await _return_stock(db, item.variant_id, item.quantity)
+
+
+async def _return_stock(db: AsyncSession, variant_id: uuid.UUID | None, quantity: int) -> None:
+    """One bottle back on the shelf. A variant deleted since is simply gone."""
+    if variant_id is None:
+        return
+    variant = await db.get(ProductVariant, variant_id, with_for_update=True)
+    if variant is not None:
+        variant.stock_quantity += quantity
 
 
 async def cancel_order(db: AsyncSession, order_id: uuid.UUID, user: User) -> Order:
@@ -398,6 +602,87 @@ async def cancel_order(db: AsyncSession, order_id: uuid.UUID, user: User) -> Ord
     return await get_order(db, order_id)
 
 
+async def edit_order(db: AsyncSession, order_id: uuid.UUID, data: OrderEditRequest) -> Order:
+    """Rewrite a placed order's lines, prices, charges and address.
+
+    Only while the shop is still holding the stock for it — see
+    STOCK_HELD_STATUSES. Once an order has shipped, its contents are a fact
+    about a parcel that has left the building: "editing" one would move stock
+    that is no longer on the shelf and restate revenue the reports have already
+    counted. Cancelled and refunded orders have handed their stock back, so
+    re-reserving against them would take it twice.
+
+    The stock is rebuilt rather than diffed: everything the order holds goes
+    back, then the new lines take what they need. A diff would have to reason
+    about combos whose components changed underneath it, and would get the
+    "same order, one more unit" case wrong whenever that unit was the last on
+    the shelf. Both halves are one transaction, so a line the shelf cannot
+    satisfy rolls the whole thing back and the order is untouched.
+    """
+    order = await get_order(db, order_id)
+    if order.status not in STOCK_HELD_STATUSES:
+        held = ", ".join(sorted(s.value for s in STOCK_HELD_STATUSES))
+        raise BusinessRuleError(
+            f"An order that is {order.status.value} can no longer be edited. "
+            f"Only {held} orders can be — after that its contents are a record "
+            f"of what was sent."
+        )
+
+    await _restock(db, order)
+    # Explicit: the session runs with autoflush off, so without this the
+    # SELECT ... FOR UPDATE inside `_reserve_lines` would read the shelf as it
+    # was before the restock and refuse an edit it should allow.
+    await db.flush()
+
+    # Drop the old lines before the new ones are attached. delete-orphan takes
+    # the rows, and each line's own cascade takes its combo components.
+    order.items.clear()
+    await db.flush()
+
+    items, subtotal = await _reserve_lines(db, data.items)
+
+    shop = await settings_service.get(db)
+    shipping_fee = (
+        data.shipping_fee
+        if data.shipping_fee is not None
+        else cart_service.calculate_shipping(subtotal, shop)
+    )
+    discount = data.discount_total or Decimal("0.00")
+    if discount > subtotal + shipping_fee:
+        raise BusinessRuleError("The discount is larger than the order")
+
+    total = subtotal + shipping_fee - discount
+    # Money already collected is a fact recorded against the order; an edit
+    # changes what was bought, not what was handed over. Editing the order down
+    # below that figure would leave the customer owing a negative amount, which
+    # is a refund to be handled deliberately rather than implied by a form.
+    if order.amount_paid > total:
+        raise BusinessRuleError(
+            f"{order.amount_paid} has already been collected on this order, so "
+            f"it cannot be edited down to {total}. Refund the difference first."
+        )
+
+    address = data.shipping_address.model_dump()
+    address.pop("label", None)
+    address.pop("is_default", None)
+    for field, value in address.items():
+        setattr(order, field, value)
+
+    order.items = items
+    order.subtotal = subtotal
+    order.shipping_fee = shipping_fee
+    order.discount_total = discount
+    order.total = total
+    # Notes are left exactly as they were — see OrderEditRequest for why.
+    # The badge is read off the money, so a part-paid order edited down to the
+    # amount already collected reads as paid rather than staying "partial".
+    order.payment_status = order.derive_payment_status()
+
+    await db.commit()
+    _after_history_rewrite()
+    return await get_order(db, order_id)
+
+
 async def _erase(db: AsyncSession, order: Order) -> None:
     """Drop one order, uncommitted. Items and payments go with it via the FK
     cascade; stock the shop is still holding for it goes back on the shelf."""
@@ -406,11 +691,17 @@ async def _erase(db: AsyncSession, order: Order) -> None:
     await db.delete(order)
 
 
-def _after_delete() -> None:
-    # The ORM listener clears ORDERS and REPORTS for any order write, but not
-    # the archive shelf, on the reasoning that a new order can only land in a
-    # range that is still open. A deletion breaks that: it can take revenue out
-    # of a month that closed weeks ago, so the archived reports have to go too.
+def _after_history_rewrite() -> None:
+    """Drop the archived reports too, not just the live ones.
+
+    The ORM listener clears ORDERS and REPORTS for any order write, but not the
+    archive shelf, on the reasoning that a *new* order can only land in a range
+    that is still open. Two operations break that reasoning and must call this:
+    deleting an order, which takes revenue out of a month that closed weeks ago,
+    and editing one, which restates the total of an order already counted in a
+    closed month. Both leave an archived report showing a figure that no longer
+    exists anywhere in the database.
+    """
     cache.invalidate(cache.REPORTS_ARCHIVE)
 
 
@@ -426,7 +717,7 @@ async def delete_order(db: AsyncSession, order_id: uuid.UUID) -> None:
     order = await get_order(db, order_id)
     await _erase(db, order)
     await db.commit()
-    _after_delete()
+    _after_history_rewrite()
 
 
 async def delete_orders(db: AsyncSession, order_ids: list[uuid.UUID]) -> int:
@@ -443,7 +734,7 @@ async def delete_orders(db: AsyncSession, order_ids: list[uuid.UUID]) -> int:
     for order in orders:
         await _erase(db, order)
     await db.commit()
-    _after_delete()
+    _after_history_rewrite()
     return len(orders)
 
 

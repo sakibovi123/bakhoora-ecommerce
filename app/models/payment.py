@@ -6,8 +6,8 @@ from sqlalchemy import ForeignKey, Numeric, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import Base, TimestampMixin, UUIDMixin
-from app.models.order import PaymentStatus, _enum
+from app.db.base import Base, TimestampMixin, UUIDMixin, enum_column
+from app.models.order import PaymentStatus
 
 if TYPE_CHECKING:
     from app.models.order import Order
@@ -24,7 +24,7 @@ class Payment(UUIDMixin, TimestampMixin, Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), default="BDT", nullable=False)
     status: Mapped[PaymentStatus] = mapped_column(
-        _enum(PaymentStatus, "payment_status"),
+        enum_column(PaymentStatus, "payment_status"),
         default=PaymentStatus.PENDING,
         nullable=False,
     )

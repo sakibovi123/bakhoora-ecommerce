@@ -6,8 +6,11 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Query, Response, status
 
 from app.api.deps import (
+    Administrator,
     CategoriesManager,
     CategoriesViewer,
+    CombosManager,
+    CombosViewer,
     CustomersManager,
     CustomersViewer,
     DashboardViewer,
@@ -37,11 +40,13 @@ from app.schemas.admin import (
     StockUpdate,
 )
 from app.schemas.category import CategoryOut
+from app.schemas.combo import ComboOut, ComboReorder, StockCoverage
 from app.schemas.common import Page
 from app.schemas.order import (
     ManualOrderRequest,
     OrderBulkDelete,
     OrderBulkDeleteResult,
+    OrderEditRequest,
     OrderListItem,
     OrderOut,
     OrderStatusUpdate,
@@ -54,6 +59,7 @@ from app.schemas.user import UserOut
 from app.services import (
     admin_service,
     category_service,
+    combo_service,
     order_service,
     product_service,
     report_service,
@@ -243,6 +249,54 @@ async def reorder_categories(
     return await admin_service.reorder_categories(db, data)
 
 
+# --- combos ----------------------------------------------------------------
+
+@router.get("/combos", response_model=list[ComboOut])
+async def list_combos(
+    db: DbSession,
+    _: CombosViewer,
+    search: Annotated[str | None, Query(max_length=100)] = None,
+    active: bool | None = None,
+) -> list[ComboOut]:
+    """Unlike the storefront listing this shows switched-off combos too.
+
+    Uncached on purpose. The panel is where someone reads a combo's availability
+    to decide whether to re-stock or retire it, and a figure that is up to a
+    minute behind the shelf is worse than useless on that screen.
+    """
+    return await combo_service.list_combos(
+        db, search=search, include_inactive=True, is_active=active
+    )
+
+
+@router.get("/combos/stock-coverage", response_model=StockCoverage)
+async def combo_stock_coverage(
+    db: DbSession,
+    _: CombosViewer,
+    include_inactive: bool = True,
+) -> StockCoverage:
+    """Which perfumes the campaign leans on, and which it has left out.
+
+    Declared above `/combos/{combo_id}` so "stock-coverage" is read as the
+    literal path it is rather than as a malformed UUID.
+    """
+    return await combo_service.stock_coverage(db, include_inactive=include_inactive)
+
+
+@router.patch("/combos/reorder", response_model=list[ComboOut])
+async def reorder_combos(
+    data: ComboReorder, db: DbSession, _: CombosManager
+) -> list[ComboOut]:
+    """The order the storefront lists them in."""
+    return await combo_service.reorder(db, data)
+
+
+@router.get("/combos/{combo_id}", response_model=ComboOut)
+async def get_combo(combo_id: uuid.UUID, db: DbSession, _: CombosViewer) -> ComboOut:
+    """By id — the builder edits combos whose slug may be about to change."""
+    return await combo_service.get_by_id(db, combo_id)
+
+
 # --- orders ----------------------------------------------------------------
 
 @router.get("/orders", response_model=Page[OrderListItem])
@@ -294,6 +348,28 @@ async def update_order(
     order_id: uuid.UUID, data: OrderStatusUpdate, db: DbSession, _: OrdersManager
 ) -> Order:
     return await order_service.update_status(db, order_id, data)
+
+
+@router.put("/orders/{order_id}", response_model=OrderOut)
+async def edit_order(
+    order_id: uuid.UUID, data: OrderEditRequest, db: DbSession, _: Administrator
+) -> Order:
+    """Rewrite a placed order's lines, prices, charges and address.
+
+    `Administrator`, not `OrdersManager`. Managing orders is the counter job —
+    confirm, take payment, mark shipped — and a staff role can hold it. This
+    rewrites what was bought: it moves stock and restates a total the reports
+    have already counted, so it is kept to the owner and cannot be granted from
+    the Roles screen.
+
+    PUT rather than PATCH because the body is the whole order. A partial edit
+    would make an absent `items` ambiguous between "unchanged" and "empty", and
+    that is the one instruction that must not be guessed at when stock is about
+    to move.
+
+    Refused once the order has shipped — see `order_service.edit_order`.
+    """
+    return await order_service.edit_order(db, order_id, data)
 
 
 @router.delete("/orders/{order_id}", status_code=status.HTTP_204_NO_CONTENT)

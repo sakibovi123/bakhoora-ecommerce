@@ -330,7 +330,9 @@ async def sales_report(
         row = money.get(period)
         orders = row.orders if row else 0
         net = _money(row.net_revenue) if row else _ZERO
-        spent = spend.by_period[period].amount if period in spend.by_period else _ZERO
+        period_spend = spend.by_period.get(period)
+        spent = period_spend.amount if period_spend else _ZERO
+        owed = period_spend.outstanding if period_spend else _ZERO
         buckets.append(
             SalesBucket(
                 period=period,
@@ -345,6 +347,12 @@ async def sales_report(
                 cancelled_value=_money(row.cancelled_value) if row else _ZERO,
                 average_order_value=_average(net, orders),
                 expenses=spent,
+                outstanding=owed,
+                # The full cost, not just what has been paid. A bill the shop
+                # has taken delivery of but not settled is still a cost of the
+                # month it was incurred in; treating the unpaid part as profit
+                # until the supplier is paid would flatter every month that
+                # bought on credit and punish the one that finally settled.
                 net_profit=net - spent,
             )
         )
@@ -374,6 +382,7 @@ async def sales_report(
             round(float((total_net - previous) / previous * 100), 1) if previous else None
         ),
         expenses=total_expenses,
+        outstanding=sum((bucket.outstanding for bucket in buckets), _ZERO),
         net_profit=total_profit,
         previous_expenses=spend.previous,
         previous_net_profit=previous_profit,

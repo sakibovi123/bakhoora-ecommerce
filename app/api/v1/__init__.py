@@ -6,8 +6,10 @@ from app.api.v1 import (
     captions,
     cart,
     categories,
+    combos,
     expenses,
     orders,
+    pricing,
     products,
     settings,
     users,
@@ -18,10 +20,12 @@ api_router.include_router(auth.router)
 api_router.include_router(users.router)
 api_router.include_router(categories.router)
 api_router.include_router(products.router)
+api_router.include_router(combos.router)
 api_router.include_router(cart.router)
 api_router.include_router(orders.router)
 api_router.include_router(admin.router)
 api_router.include_router(expenses.router)
+api_router.include_router(pricing.router)
 api_router.include_router(captions.router)
 api_router.include_router(settings.router)
 

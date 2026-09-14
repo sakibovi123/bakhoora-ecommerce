@@ -69,6 +69,14 @@ export const IconCategories = (p: IconProps) => (
   </Icon>
 );
 
+export const IconCombos = (p: IconProps) => (
+  <Icon {...p}>
+    {/* Three bottles standing together: the product glyph, bundled. */}
+    <path d="M4 10h4v11H4zM10 8h4v13h-4zM16 11h4v10h-4z" />
+    <path d="M5 7h2v3H5zM11 5h2v3h-2zM17 8h2v3h-2z" />
+  </Icon>
+);
+
 export const IconCustomers = (p: IconProps) => (
   <Icon {...p}>
     <circle cx="9" cy="8" r="3.2" />
@@ -110,6 +118,13 @@ export const IconExpenses = (p: IconProps) => (
     <path d="M3 7.5A1.5 1.5 0 014.5 6h15A1.5 1.5 0 0121 7.5v9a1.5 1.5 0 01-1.5 1.5h-15A1.5 1.5 0 013 16.5z" />
     <path d="M3 10.5h18" />
     <path d="M7 14.5h3" />
+  </Icon>
+);
+
+export const IconPricing = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M3.5 11.2V4.5a1 1 0 011-1h6.7a1 1 0 01.71.3l8.09 8.08a1 1 0 010 1.41l-6.7 6.7a1 1 0 01-1.41 0L3.8 11.9a1 1 0 01-.3-.7z" />
+    <path d="M7.75 7.75h.01" />
   </Icon>
 );
 
@@ -290,8 +305,10 @@ export const MENU_ICONS = {
   orders: IconOrders,
   products: IconProducts,
   categories: IconCategories,
+  combos: IconCombos,
   customers: IconCustomers,
   roles: IconRoles,
   expenses: IconExpenses,
+  pricing: IconPricing,
   settings: IconSettings,
 } as const;

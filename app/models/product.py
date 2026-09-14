@@ -58,6 +58,16 @@ class ProductVariant(UUIDMixin, TimestampMixin, Base):
     sku: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     compare_at_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+
+    # What the shop pays for one of these. Nullable because it is genuinely
+    # unknown for anything bought before it was recorded, and a nullable column
+    # says that honestly where a 0.00 default would claim the bottle was free
+    # and quietly report a 100% margin on it.
+    #
+    # NEVER put this on VariantOut. That schema is what `GET /products` serves
+    # to the storefront, so a field added there is published to customers. The
+    # pricing module has its own admin-only schemas for exactly this reason.
+    cost_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     stock_quantity: Mapped[int] = mapped_column(default=0, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 

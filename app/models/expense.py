@@ -47,8 +47,27 @@ class Expense(UUIDMixin, TimestampMixin, Base):
     spent_on: Mapped[date] = mapped_column(Date, index=True, nullable=False)
 
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+
+    # What has actually been handed over, which on a supplier bill is routinely
+    # less than `amount` — the Printing Touch memo that prompted this reads
+    # Total 7,000 / Advance 2,000 / Due 5,000. `amount` stays the full cost so
+    # the report charges the month for what the shop really bought; this column
+    # is the cash side of it. Mirrors `Order.amount_paid` on the takings side.
+    amount_paid: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0, nullable=False)
+
     description: Mapped[str] = mapped_column(String(200), nullable=False)
     note: Mapped[str | None] = mapped_column(Text)
+
+    # Who was paid, and their own number for the bill — the two things you need
+    # to find the paper again when a figure is queried months later. Both are
+    # free text: a supplier list would be a table nobody maintains.
+    supplier: Mapped[str | None] = mapped_column(String(120))
+    reference: Mapped[str | None] = mapped_column(String(60))
+
+    # The photographed memo this was read off, when it came from one. Null for
+    # an expense typed in by hand, which is also how the panel decides whether
+    # to offer a "view receipt" link.
+    receipt_url: Mapped[str | None] = mapped_column(String(500))
 
     # RESTRICT, not SET NULL: a product without a category still lists and still
     # sells, but an expense without one is a hole in the report — it either
@@ -64,3 +83,13 @@ class Expense(UUIDMixin, TimestampMixin, Base):
     category: Mapped["ExpenseCategory"] = relationship(
         back_populates="expenses", lazy="selectin"
     )
+
+    @property
+    def amount_due(self) -> Decimal:
+        """What the shop still owes on this bill.
+
+        Derived rather than stored, so it cannot drift out of step with the two
+        figures it comes from. Never negative: paying a supplier more than the
+        bill is an overpayment to settle on its own, not a negative due.
+        """
+        return max(self.amount - self.amount_paid, Decimal("0.00"))

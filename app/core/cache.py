@@ -34,6 +34,9 @@ from app.core.config import settings
 # appears in, which is far more code and gets it wrong quietly.
 CATEGORIES = "categories"
 PRODUCTS = "products"
+# A combo's availability is read off its components' stock, so a checkout
+# that empties an oil changes what the combo list may say. See cache_events.
+COMBOS = "combos"
 ORDERS = "orders"
 SETTINGS = "settings"
 # Sales reports get namespaces of their own rather than riding on ORDERS.

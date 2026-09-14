@@ -20,6 +20,7 @@ from app.schemas.product import (
     VariantCreate,
     VariantUpdate,
 )
+from app.services import combo_service
 from app.utils.sizes import DEFAULT_VARIANT_SIZES_ML, size_label, size_list
 from app.utils.slug import unique_slug
 from app.utils.uploads import delete_stored, save_image
@@ -240,6 +241,21 @@ async def update(db: AsyncSession, product_id: uuid.UUID, data: ProductUpdate) -
 
 async def delete(db: AsyncSession, product_id: uuid.UUID) -> None:
     product = await get_by_id(db, product_id)
+
+    # `combo_items.product_id` is RESTRICT, so the database would refuse this
+    # anyway — as an IntegrityError that says nothing about which campaign is in
+    # the way. Asking first turns that into a sentence naming the combos, and
+    # points at the thing to do instead: a perfume that has stopped selling gets
+    # switched off, which leaves the combos intact and simply unavailable.
+    in_combos = await combo_service.combos_using(db, product_id)
+    if in_combos:
+        names = ", ".join(f"“{name}”" for name in in_combos)
+        raise ConflictError(
+            f"{product.name} is part of {names}. Take it out of "
+            f"{'those combos' if len(in_combos) > 1 else 'that combo'} first, or "
+            f"deactivate the product instead of deleting it."
+        )
+
     # The rows cascade, the files do not — collect them before the product goes.
     uploaded = [image.url for image in product.images]
     await db.delete(product)

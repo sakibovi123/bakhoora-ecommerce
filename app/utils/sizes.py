@@ -19,3 +19,12 @@ def size_label(size_ml: int) -> str:
 def size_list(sizes: tuple[int, ...] | list[int]) -> str:
     """Human-readable list for validation messages."""
     return ", ".join(size_label(size) for size in sizes)
+
+
+def combo_size_label(count: int, size_ml: int) -> str:
+    """`5 × 6ml` — the label a combo line carries onto an invoice.
+
+    Stored nowhere: a combo's contents can be edited, so the label is derived
+    when it is shown and snapshotted onto the order line at checkout.
+    """
+    return f"{count} × {size_label(size_ml)}"

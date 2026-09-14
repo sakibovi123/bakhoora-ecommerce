@@ -3,13 +3,14 @@ import uuid
 from decimal import Decimal
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Enum, ForeignKey, Index, Numeric, String, Text
+from sqlalchemy import ForeignKey, Index, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import Base, TimestampMixin, UUIDMixin
+from app.db.base import Base, TimestampMixin, UUIDMixin, enum_column
 
 if TYPE_CHECKING:
+    from app.models.combo import Combo
     from app.models.payment import Payment
     from app.models.product import ProductVariant
     from app.models.user import User
@@ -41,22 +42,6 @@ class PaymentStatus(str, enum.Enum):
 TERMINAL_PAYMENT_STATUSES = {PaymentStatus.REFUNDED, PaymentStatus.FAILED}
 
 
-def _enum(python_enum: type[enum.Enum], name: str) -> Enum:
-    """VARCHAR-backed enum instead of a native PostgreSQL type.
-
-    Native pg enums turn every future status addition into an ALTER TYPE special
-    case, and one type shared by two tables breaks Alembic autogenerate.
-    A VARCHAR(20) column keeps migrations boring.
-    """
-    return Enum(
-        python_enum,
-        name=name,
-        native_enum=False,
-        length=20,
-        values_callable=lambda e: [m.value for m in e],
-    )
-
-
 class Order(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "orders"
 
@@ -72,10 +57,13 @@ class Order(UUIDMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
     status: Mapped[OrderStatus] = mapped_column(
-        _enum(OrderStatus, "order_status"), default=OrderStatus.PENDING, nullable=False, index=True
+        enum_column(OrderStatus, "order_status"),
+        default=OrderStatus.PENDING,
+        nullable=False,
+        index=True,
     )
     payment_status: Mapped[PaymentStatus] = mapped_column(
-        _enum(PaymentStatus, "payment_status"), default=PaymentStatus.UNPAID, nullable=False
+        enum_column(PaymentStatus, "payment_status"), default=PaymentStatus.UNPAID, nullable=False
     )
     payment_method: Mapped[str] = mapped_column(String(40), default="cod", nullable=False)
 
@@ -158,7 +146,15 @@ class Order(UUIDMixin, TimestampMixin, Base):
 
 
 class OrderItem(UUIDMixin, TimestampMixin, Base):
-    """Product details are copied in so the line survives catalogue edits."""
+    """Product details are copied in so the line survives catalogue edits.
+
+    A line is one of two things. A single bottle carries `variant_id` and no
+    components. A combo carries `combo_id`, no `variant_id` — there is no one
+    variant it refers to — and one `components` row per bottle inside it, which
+    is what the stock arithmetic reads. Both kinds price the same way, so every
+    report, invoice and best-seller query that sums `line_total` keeps working
+    without knowing combos exist; a combo simply appears under its own name.
+    """
 
     __tablename__ = "order_items"
 
@@ -167,6 +163,11 @@ class OrderItem(UUIDMixin, TimestampMixin, Base):
     )
     variant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("product_variants.id", ondelete="SET NULL"), index=True
+    )
+    # Which campaign this line came from, for reporting. SET NULL because
+    # deleting a finished campaign must not delete the orders it produced.
+    combo_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("combos.id", ondelete="SET NULL"), index=True
     )
     product_name: Mapped[str] = mapped_column(String(200), nullable=False)
     variant_name: Mapped[str] = mapped_column(String(80), nullable=False)
@@ -177,4 +178,49 @@ class OrderItem(UUIDMixin, TimestampMixin, Base):
     line_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
 
     order: Mapped["Order"] = relationship(back_populates="items")
+    variant: Mapped[Optional["ProductVariant"]] = relationship()
+    combo: Mapped[Optional["Combo"]] = relationship()
+    components: Mapped[list["OrderItemComponent"]] = relationship(
+        back_populates="item", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+    @property
+    def is_combo(self) -> bool:
+        return bool(self.components)
+
+
+class OrderItemComponent(UUIDMixin, TimestampMixin, Base):
+    """One bottle inside a combo line, snapshotted like the line above it.
+
+    This exists so cancelling, refunding or deleting an order can put the right
+    stock back. A combo line has no `variant_id` of its own, so without these
+    rows the five bottles it reserved would stay reserved forever — and reading
+    the combo's *current* contents instead would restock whatever the campaign
+    happens to hold today, not what actually went out of the door.
+
+    It carries no money. The combo is flat-priced as a whole, and splitting
+    that across five bottles would invent per-bottle revenue that nobody
+    agreed; every total on the order comes from the parent line.
+    """
+
+    __tablename__ = "order_item_components"
+
+    order_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("order_items.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    variant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("product_variants.id", ondelete="SET NULL"), index=True
+    )
+    product_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    variant_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    sku: Mapped[str] = mapped_column(String(64), nullable=False)
+    position: Mapped[int] = mapped_column(default=0, nullable=False)
+    # Bottles of this oil per one combo — 1 today, but a bundle that doubles up
+    # on a base note is a campaign decision, not a schema change.
+    quantity: Mapped[int] = mapped_column(default=1, nullable=False)
+
+    item: Mapped["OrderItem"] = relationship(back_populates="components")
     variant: Mapped[Optional["ProductVariant"]] = relationship()

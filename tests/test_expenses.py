@@ -237,3 +237,185 @@ async def test_a_back_dated_expense_clears_the_archive(client, admin_token):
         f"/api/v1/admin/reports/daily?{closed}", headers=auth(admin_token)
     )
     assert response.json()["summary"]["expenses"] == "75.00"
+
+
+# --- part-paid bills --------------------------------------------------------
+#
+# The shop pays suppliers in instalments. `amount` is the whole bill, which is
+# what the month is charged for; `amount_paid` is the cash that has actually
+# moved. Everything below exists because those two are easy to conflate, and
+# conflating them either flatters a month that bought on credit or loses track
+# of what is owed.
+
+
+async def test_an_omitted_paid_amount_means_the_bill_was_settled(client, admin_token):
+    category = await _category(client, admin_token)
+    created = await _expense(
+        client, admin_token, category["id"], spent_on=report_service.today(), amount="450.00"
+    )
+    # Most expenses are bought and paid for in one go, so the common call — which
+    # sends no paid figure at all — must not leave the whole thing owed.
+    assert created["amount_paid"] == "450.00"
+    assert created["amount_due"] == "0.00"
+
+
+async def test_an_advance_leaves_the_rest_owed(client, admin_token):
+    """The Printing Touch memo: total 7,000, advance 2,000, due 5,000."""
+    category = await _category(client, admin_token)
+    response = await client.post(
+        "/api/v1/admin/expenses",
+        headers=auth(admin_token),
+        json={
+            "spent_on": str(report_service.today()),
+            "amount": "7000.00",
+            "amount_paid": "2000.00",
+            "description": "200 boxes",
+            "supplier": "Printing Touch",
+            "reference": "579",
+            "category_id": category["id"],
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["amount"] == "7000.00"
+    assert body["amount_paid"] == "2000.00"
+    assert body["amount_due"] == "5000.00"
+    assert body["supplier"] == "Printing Touch"
+    assert body["reference"] == "579"
+
+
+async def test_a_wholly_unpaid_bill_is_not_the_same_as_an_omitted_one(client, admin_token):
+    """Explicit zero has to survive: it is a statement, not a missing value."""
+    category = await _category(client, admin_token)
+    response = await client.post(
+        "/api/v1/admin/expenses",
+        headers=auth(admin_token),
+        json={
+            "spent_on": str(report_service.today()),
+            "amount": "1200.00",
+            "amount_paid": "0",
+            "description": "Bottles on credit",
+            "category_id": category["id"],
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["amount_due"] == "1200.00"
+
+
+async def test_paying_more_than_the_bill_is_refused(client, admin_token):
+    category = await _category(client, admin_token)
+    response = await client.post(
+        "/api/v1/admin/expenses",
+        headers=auth(admin_token),
+        json={
+            "spent_on": str(report_service.today()),
+            "amount": "100.00",
+            "amount_paid": "150.00",
+            "description": "Typo",
+            "category_id": category["id"],
+        },
+    )
+    assert response.status_code == 422
+
+
+async def test_a_total_cannot_be_edited_below_what_is_already_paid(client, admin_token):
+    """The case the schema cannot catch: a PATCH carrying only one of the pair.
+
+    Left unchecked this produces a negative due, which would then be shown as
+    money the supplier owes the shop.
+    """
+    category = await _category(client, admin_token)
+    created = await _expense(
+        client, admin_token, category["id"], spent_on=report_service.today(), amount="7000.00"
+    )
+
+    response = await client.patch(
+        f"/api/v1/admin/expenses/{created['id']}",
+        headers=auth(admin_token),
+        json={"amount": "500.00"},
+    )
+    assert response.status_code == 422
+    assert "already recorded as paid" in response.json()["error"]["message"]
+
+
+async def test_settling_a_due_clears_it(client, admin_token):
+    category = await _category(client, admin_token)
+    response = await client.post(
+        "/api/v1/admin/expenses",
+        headers=auth(admin_token),
+        json={
+            "spent_on": str(report_service.today()),
+            "amount": "7000.00",
+            "amount_paid": "2000.00",
+            "description": "200 boxes",
+            "category_id": category["id"],
+        },
+    )
+    created = response.json()
+
+    paid_up = await client.patch(
+        f"/api/v1/admin/expenses/{created['id']}",
+        headers=auth(admin_token),
+        json={"amount_paid": "7000.00"},
+    )
+    assert paid_up.status_code == 200
+    assert paid_up.json()["amount_due"] == "0.00"
+
+
+async def test_the_list_totals_separate_the_bill_from_the_due(client, admin_token):
+    category = await _category(client, admin_token)
+    today = report_service.today()
+    await client.post(
+        "/api/v1/admin/expenses",
+        headers=auth(admin_token),
+        json={
+            "spent_on": str(today),
+            "amount": "7000.00",
+            "amount_paid": "2000.00",
+            "description": "200 boxes",
+            "category_id": category["id"],
+        },
+    )
+    await _expense(client, admin_token, category["id"], spent_on=today, amount="500.00")
+
+    body = (await client.get("/api/v1/admin/expenses", headers=auth(admin_token))).json()
+    # Spent is the full cost of both bills; owed is only what has not moved.
+    assert body["total_spent"] == "7500.00"
+    assert body["total_outstanding"] == "5000.00"
+
+
+async def test_the_report_charges_the_whole_bill_and_names_the_due(client, admin_token):
+    """A part-paid bill is a cost of the month it was incurred in, in full.
+
+    Counting only the advance would flatter every month that bought on credit
+    and then punish the month that finally settled — the same purchase moving
+    the profit line twice.
+    """
+    category = await _category(client, admin_token)
+    today = report_service.today()
+    await client.post(
+        "/api/v1/admin/expenses",
+        headers=auth(admin_token),
+        json={
+            "spent_on": str(today),
+            "amount": "7000.00",
+            "amount_paid": "2000.00",
+            "description": "200 boxes",
+            "category_id": category["id"],
+        },
+    )
+
+    body = (
+        await client.get(
+            f"/api/v1/admin/reports/daily?start={today}&end={today}",
+            headers=auth(admin_token),
+        )
+    ).json()
+
+    assert body["summary"]["expenses"] == "7000.00"
+    assert body["summary"]["net_profit"] == "-7000.00"
+    # Reported beside the cost, never subtracted from it a second time.
+    assert body["summary"]["outstanding"] == "5000.00"
+    assert body["buckets"][0]["outstanding"] == "5000.00"
+    # The breakdown is still the full cost, matching `expenses` above.
+    assert body["expense_breakdown"][0]["amount"] == "7000.00"

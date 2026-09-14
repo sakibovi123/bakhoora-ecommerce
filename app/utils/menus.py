@@ -20,9 +20,11 @@ MENUS: tuple[Menu, ...] = (
     Menu("reports", "Sales reports", "Daily and monthly takings, broken down"),
     Menu("products", "Products", "The catalogue, its sizes, prices and stock"),
     Menu("categories", "Categories", "How the storefront groups products"),
+    Menu("combos", "Combos", "Bundles of whole perfumes sold at one flat price"),
     Menu("customers", "Customers", "Accounts, order history and access"),
     Menu("roles", "Roles & access", "Who may enter the panel and what they may touch"),
     Menu("expenses", "Expenses", "What the shop spends, and on what"),
+    Menu("pricing", "Pricing", "Buying and selling prices, and the margin between them"),
     Menu("settings", "Settings", "Shop name, branding, currency, delivery and advance payment"),
 )
 

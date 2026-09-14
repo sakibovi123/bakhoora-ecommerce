@@ -4,7 +4,8 @@ import { useCallback, useMemo, useState } from "react";
 
 import { useConfirm } from "@/components/admin/dialog";
 import { Dropdown } from "@/components/admin/dropdown";
-import { IconPlus, IconSave, IconSpinner, IconTrash } from "@/components/admin/icons";
+import { IconImage, IconPlus, IconSave, IconSpinner, IconTrash } from "@/components/admin/icons";
+import { ReceiptUpload } from "@/components/admin/receipt-upload";
 import { Require } from "@/components/admin/require";
 import { useToast } from "@/components/admin/toast";
 import {
@@ -23,7 +24,7 @@ import {
   Textarea,
   Toggle,
 } from "@/components/admin/ui";
-import { ApiError, adminApi } from "@/lib/admin/client";
+import { ApiError, adminApi, mediaUrl } from "@/lib/admin/client";
 import { money, plainDate } from "@/lib/admin/format";
 import type { Expense, ExpenseCategory } from "@/lib/admin/types";
 import { useResource } from "@/lib/admin/use-resource";
@@ -84,11 +85,13 @@ function ExpensesScreen() {
     <div className="space-y-6">
       <PageHeader
         title="Expenses"
-        subtitle="What the shop spends. Every entry lands in the month it was paid, and shows up in the sales report."
+        subtitle="What the shop spends. Photograph a bill and it is read for you, or type one in. Every entry lands in the month the bill is dated and shows up in the sales report."
       />
 
       <div className="grid gap-3 xl:grid-cols-[2fr_1fr] xl:items-start">
         <div className="space-y-3">
+          <ReceiptUpload categories={active} onSaved={reloadAll} />
+
           <Panel bodyClassName="p-4 sm:p-5">
             <div className="grid gap-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
               <Field label="Month">
@@ -135,13 +138,20 @@ function ExpensesScreen() {
             </div>
 
             {expenses.data ? (
-              <p className="label mt-5 border-t border-line pt-4 text-muted">
-                {/* The total is for the whole filter, not this page — otherwise
-                    it would change as you clicked through. */}
-                {money(expenses.data.total_spent)} across {expenses.data.total} entr
-                {expenses.data.total === 1 ? "y" : "ies"}
-                {month ? " this month" : ""}
-              </p>
+              <div className="label mt-5 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-line pt-4 text-muted">
+                {/* Both totals are for the whole filter, not this page —
+                    otherwise they would change as you clicked through. */}
+                <span>
+                  {money(expenses.data.total_spent)} across {expenses.data.total} entr
+                  {expenses.data.total === 1 ? "y" : "ies"}
+                  {month ? " this month" : ""}
+                </span>
+                {Number.parseFloat(expenses.data.total_outstanding) > 0 ? (
+                  <span className="text-[var(--color-amber)]">
+                    {money(expenses.data.total_outstanding)} still owed
+                  </span>
+                ) : null}
+              </div>
             ) : null}
           </Panel>
 
@@ -167,7 +177,7 @@ function ExpensesScreen() {
               </div>
             ) : (
               <>
-                <Table head={["Date", "Description", "Category", "Amount", ""]}>
+                <Table head={["Date", "Description", "Category", "Amount", "Due", ""]}>
                   {expenses.data.items.map((expense) => (
                     <ExpenseRow
                       key={expense.id}
@@ -221,6 +231,7 @@ function ExpenseRow({
 
   const [spentOn, setSpentOn] = useState(expense.spent_on);
   const [amount, setAmount] = useState(expense.amount);
+  const [paid, setPaid] = useState(expense.amount_paid);
   const [description, setDescription] = useState(expense.description);
   const [categoryId, setCategoryId] = useState(expense.category.id);
 
@@ -231,6 +242,7 @@ function ExpenseRow({
       await adminApi.updateExpense(token, expense.id, {
         spent_on: spentOn,
         amount,
+        amount_paid: paid,
         description: description.trim(),
         category_id: categoryId,
       });
@@ -286,8 +298,21 @@ function ExpenseRow({
             type="number"
             min="0"
             step="0.01"
+            aria-label="Bill total"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
+          />
+        </Cell>
+        <Cell>
+          {/* Paid, not due: the due is derived, and offering it as an input
+              would let the two be edited into disagreeing. */}
+          <Input
+            type="number"
+            min="0"
+            step="0.01"
+            aria-label="Paid so far"
+            value={paid}
+            onChange={(e) => setPaid(e.target.value)}
           />
         </Cell>
         <Cell>
@@ -310,12 +335,39 @@ function ExpenseRow({
       <Cell className="whitespace-nowrap">{plainDate(expense.spent_on)}</Cell>
       <Cell>
         {expense.description}
+        {expense.supplier || expense.reference ? (
+          <span className="block text-xs text-muted">
+            {[expense.supplier, expense.reference ? `#${expense.reference}` : null]
+              .filter(Boolean)
+              .join(" · ")}
+          </span>
+        ) : null}
         {expense.note ? <span className="block text-xs text-muted">{expense.note}</span> : null}
       </Cell>
       <Cell className="text-muted">{expense.category.name}</Cell>
       <Cell className="[font-variant-numeric:tabular-nums]">{money(expense.amount)}</Cell>
+      <Cell className="[font-variant-numeric:tabular-nums]">
+        {/* A dash, not ৳0, when nothing is owed — a column of zeroes reads as
+            data to check, and the whole point is to spot the few that are not. */}
+        {Number.parseFloat(expense.amount_due) > 0 ? (
+          <span className="text-[var(--color-amber)]">{money(expense.amount_due)}</span>
+        ) : (
+          <span className="text-muted">—</span>
+        )}
+      </Cell>
       <Cell>
         <div className="flex gap-2">
+          {expense.receipt_url ? (
+            <a
+              href={mediaUrl(expense.receipt_url)}
+              target="_blank"
+              rel="noreferrer"
+              title="View the bill this was read off"
+              className="inline-flex items-center border border-line px-2 py-1 text-muted hover:text-ink"
+            >
+              <IconImage />
+            </a>
+          ) : null}
           <Button tone="ghost" onClick={() => setEditing(true)} disabled={busy}>
             Edit
           </Button>
@@ -351,11 +403,19 @@ function AddExpense({
 
   const [spentOn, setSpentOn] = useState(today);
   const [amount, setAmount] = useState("");
+  const [paid, setPaid] = useState("");
+  const [supplier, setSupplier] = useState("");
   const [description, setDescription] = useState("");
   const [note, setNote] = useState("");
   const [categoryId, setCategoryId] = useState("");
 
-  const ready = Boolean(description.trim() && amount && categoryId && spentOn);
+  const total = Number.parseFloat(amount);
+  const handed = paid.trim() === "" ? total : Number.parseFloat(paid);
+  const overpaid =
+    Number.isFinite(total) && Number.isFinite(handed) && handed > total;
+
+  const ready =
+    Boolean(description.trim() && amount && categoryId && spentOn) && !overpaid;
 
   async function create() {
     if (!token || !ready) return;
@@ -364,12 +424,18 @@ function AddExpense({
       await adminApi.createExpense(token, {
         spent_on: spentOn,
         amount,
+        // Blank is the common case — bought and paid for in one go — and the
+        // API reads an absent value as settled in full.
+        amount_paid: paid.trim() === "" ? null : paid,
         description: description.trim(),
         note: note.trim() || null,
+        supplier: supplier.trim() || null,
         category_id: categoryId,
       });
       notify("Expense recorded");
       setAmount("");
+      setPaid("");
+      setSupplier("");
       setDescription("");
       setNote("");
       onDone();
@@ -386,7 +452,7 @@ function AddExpense({
         <Field label="Date paid" hint="The day the money left, not today's date.">
           <Input type="date" value={spentOn} onChange={(e) => setSpentOn(e.target.value)} />
         </Field>
-        <Field label="Amount">
+        <Field label="Amount" hint="The whole cost, paid or not.">
           <Input
             type="number"
             min="0"
@@ -394,6 +460,28 @@ function AddExpense({
             placeholder="0.00"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
+          />
+        </Field>
+        <Field
+          label="Paid now"
+          hint="Leave blank if paid in full."
+          error={overpaid ? "More than the amount above." : null}
+        >
+          <Input
+            type="number"
+            min="0"
+            step="0.01"
+            placeholder={Number.isFinite(total) ? total.toFixed(2) : "0.00"}
+            value={paid}
+            onChange={(e) => setPaid(e.target.value)}
+          />
+        </Field>
+        <Field label="Supplier" hint="Optional.">
+          <Input
+            maxLength={120}
+            placeholder="Who was paid"
+            value={supplier}
+            onChange={(e) => setSupplier(e.target.value)}
           />
         </Field>
         <Field label="What it was">

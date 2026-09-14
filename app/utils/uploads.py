@@ -7,6 +7,7 @@ matter of reimplementing those two functions.
 
 import uuid
 from pathlib import Path
+from typing import NamedTuple
 
 from fastapi import UploadFile
 
@@ -28,7 +29,13 @@ _SIGNATURES: tuple[tuple[bytes, int, str], ...] = (
 READABLE_TYPES = "JPEG, PNG, WebP, GIF, AVIF or HEIC"
 
 
-def _extension(head: bytes) -> str | None:
+def extension_of(head: bytes) -> str | None:
+    """The file's kind, from its own leading bytes. None if unrecognised.
+
+    Public because a caller may need to refuse a format *before* storing it —
+    the receipt reader accepts a narrower set than this module does, since no
+    vision model reads AVIF or HEIC.
+    """
     for magic, offset, ext in _SIGNATURES:
         if head[offset : offset + len(magic)] != magic:
             continue
@@ -44,7 +51,17 @@ def _extension(head: bytes) -> str | None:
 # image row, and a future move to object storage can treat them differently.
 PRODUCTS_FOLDER = "products"
 BRANDING_FOLDER = "branding"
-_FOLDERS = frozenset({PRODUCTS_FOLDER, BRANDING_FOLDER})
+# Photographed supplier bills. Kept apart from product imagery because these are
+# the shop's own books rather than anything a customer sees.
+#
+# Worth knowing: `main.py` mounts the whole media root as StaticFiles, so a
+# receipt is reachable by anyone holding its URL — the protection is that the
+# filename is a random UUID and appears nowhere but the admin panel, the same
+# footing product images are on. That is deliberate for now (an <img> in the
+# panel cannot send a bearer token), and the folder is separate so a private
+# bucket or a signed-URL route can be put in front of just these later.
+RECEIPTS_FOLDER = "receipts"
+_FOLDERS = frozenset({PRODUCTS_FOLDER, BRANDING_FOLDER, RECEIPTS_FOLDER})
 
 
 def media_root(folder: str = PRODUCTS_FOLDER) -> Path:
@@ -57,7 +74,18 @@ def media_root(folder: str = PRODUCTS_FOLDER) -> Path:
 
 async def save_image(file: UploadFile, folder: str = PRODUCTS_FOLDER) -> str:
     """Validate and store one upload. Returns the URL to serve it from."""
-    payload = await file.read()
+    return store_image(await file.read(), file.filename, folder)
+
+
+def store_image(payload: bytes, filename: str | None, folder: str = PRODUCTS_FOLDER) -> str:
+    """The half of `save_image` that works on bytes already in hand.
+
+    Split out for the receipt reader, which has to send the same bytes to the
+    vision model as it writes to disk. `UploadFile.read()` drains the stream, so
+    a caller that needs the payload twice cannot go through `save_image` — and
+    re-reading would silently store an empty file rather than fail.
+    """
+    file = _Named(filename)
 
     if not payload:
         raise BusinessRuleError(f"'{file.filename or 'file'}' is empty")
@@ -67,7 +95,7 @@ async def save_image(file: UploadFile, folder: str = PRODUCTS_FOLDER) -> str:
             f"'{file.filename or 'file'}' is larger than {limit}MB"
         )
 
-    extension = _extension(payload[:16])
+    extension = extension_of(payload[:16])
     if extension is None:
         raise BusinessRuleError(
             f"'{file.filename or 'file'}' is not an image the shop can use. "
@@ -79,6 +107,12 @@ async def save_image(file: UploadFile, folder: str = PRODUCTS_FOLDER) -> str:
     name = f"{uuid.uuid4().hex}.{extension}"
     (media_root(folder) / name).write_bytes(payload)
     return f"{settings.MEDIA_URL}/{folder}/{name}"
+
+
+class _Named(NamedTuple):
+    """Just enough of an UploadFile to keep the messages above unchanged."""
+
+    filename: str | None
 
 
 def delete_stored(url: str) -> None:

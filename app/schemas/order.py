@@ -24,7 +24,9 @@ class CheckoutRequest(BaseModel):
         return self
 
 
-class OrderItemOut(BaseModel):
+class OrderItemComponentOut(BaseModel):
+    """One bottle inside a combo line. Carries no money — the line above does."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -32,10 +34,27 @@ class OrderItemOut(BaseModel):
     product_name: str
     variant_name: str
     sku: str
+    quantity: int
+
+
+class OrderItemOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    variant_id: uuid.UUID | None
+    # Set on a combo line. The name, size label and price on the line are
+    # already snapshotted, so this is for reporting, not for rendering.
+    combo_id: uuid.UUID | None = None
+    product_name: str
+    variant_name: str
+    sku: str
     image_url: str | None
     unit_price: Decimal
     quantity: int
     line_total: Decimal
+    # Empty on a single bottle. On a combo it is what went in the box, which is
+    # what the picker and the invoice both need.
+    components: list[OrderItemComponentOut] = []
 
 
 class PaymentOut(BaseModel):
@@ -104,13 +123,35 @@ class CheckoutResponse(BaseModel):
 
 
 class ManualOrderLine(BaseModel):
-    variant_id: uuid.UUID
+    """One line of a counter order: a single bottle, or a whole combo."""
+
+    variant_id: uuid.UUID | None = None
+    combo_size_id: uuid.UUID | None = None
     quantity: int = Field(ge=1, le=999)
     # What the shop actually agreed for this line, per unit. Left out, the
-    # variant's listed price applies. Zero is allowed — a sample thrown in with
-    # an order is a real line at no charge, and hiding it off the invoice would
-    # make the stock movement unaccountable.
+    # variant's — or the combo's — listed price applies. Zero is allowed: a
+    # sample thrown in with an order is a real line at no charge, and hiding it
+    # off the invoice would make the stock movement unaccountable.
     unit_price: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+
+    @model_validator(mode="after")
+    def _one_kind(self) -> "ManualOrderLine":
+        if bool(self.variant_id) == bool(self.combo_size_id):
+            raise ValueError("Each line needs exactly one of variant_id or combo_size_id")
+        return self
+
+
+def _no_duplicate_lines(value: list["ManualOrderLine"]) -> list["ManualOrderLine"]:
+    """Refuse the same thing twice on one order.
+
+    Keyed on the pair rather than on the variant alone: a bottle sold on its own
+    and the same bottle inside a combo are two different lines, and collapsing
+    them would refuse a perfectly ordinary counter sale.
+    """
+    seen = [(line.variant_id, line.combo_size_id) for line in value]
+    if len(set(seen)) != len(seen):
+        raise ValueError("The same item appears on more than one line")
+    return value
 
 
 class ManualOrderRequest(BaseModel):
@@ -140,13 +181,7 @@ class ManualOrderRequest(BaseModel):
     customer_note: str | None = Field(default=None, max_length=1000)
     admin_note: str | None = Field(default=None, max_length=1000)
 
-    @field_validator("items")
-    @classmethod
-    def _one_line_per_variant(cls, value: list[ManualOrderLine]) -> list[ManualOrderLine]:
-        seen = [line.variant_id for line in value]
-        if len(set(seen)) != len(seen):
-            raise ValueError("The same size appears on more than one line")
-        return value
+    _one_line_each = field_validator("items")(_no_duplicate_lines)
 
     @field_validator("status")
     @classmethod
@@ -188,6 +223,37 @@ class OrderBulkDeleteResult(BaseModel):
     """How many of the ticked orders were still there to delete."""
 
     deleted: int
+
+
+class OrderEditRequest(BaseModel):
+    """Rewrite a placed order's contents.
+
+    The same shape as `ManualOrderRequest` minus the things an edit must not
+    touch: `status` and `payment_status` have their own endpoint and their own
+    transition rules, and `payment_method` is settled once the provider has an
+    intent against the order. `amount_paid` is likewise left alone — money that
+    was collected is a fact, recorded through `record_payment`; an edit changes
+    what was *bought*, and the payment status is re-derived from the new total.
+
+    Every field is required rather than patch-style. An edit screen sends the
+    whole order back, and a partial payload here would make "no items" mean
+    "leave the items alone" — which is the one instruction that must never be
+    ambiguous when stock is about to move.
+    """
+
+    items: list[ManualOrderLine] = Field(min_length=1, max_length=100)
+    shipping_address: AddressCreate
+    shipping_fee: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    discount_total: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+
+    # Notes are deliberately absent. `admin_note` is write-only — `OrderOut`
+    # does not return it — so a panel filling this form cannot know the current
+    # value, and a whole-object PUT carrying an absent field would erase a note
+    # nobody meant to touch. `customer_note` is the customer's own words from
+    # checkout, which is not the shop's to rewrite. The admin note has its own
+    # endpoint (`PATCH /admin/orders/{id}`) and keeps it.
+
+    _one_line_each = field_validator("items")(_no_duplicate_lines)
 
 
 class OrderStatusUpdate(BaseModel):

@@ -129,6 +129,10 @@ class Settings(BaseSettings):
     OPENROUTER_API_KEY: str = ""
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     OPENROUTER_MODEL: str = "anthropic/claude-sonnet-5"
+    # Reading a photographed bill is a different job from writing a caption and
+    # may want a different model, so it is its own setting — but it defaults to
+    # the same one, which already sees images.
+    OPENROUTER_VISION_MODEL: str = "anthropic/claude-sonnet-5"
     OPENROUTER_MAX_TOKENS: int = 1200
     OPENROUTER_TIMEOUT_SECONDS: float = 60.0
 

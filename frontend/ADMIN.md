@@ -40,14 +40,21 @@ from the API's `.env`).
 | `/admin/orders` | Search by order number, filter by status, paginate. |
 | `/admin/orders/new` | Take an order by phone or at the counter: search the catalogue, set quantities, link a customer or leave it a walk-in, override shipping and discount. |
 | `/admin/orders/[id]/invoice` | Printable invoice. Print opens the browser dialog, where "Save as PDF" is one click. |
-| `/admin/orders/[id]` | Line items, totals, shipping address, payments. Move status, set payment state, leave an internal note. |
+| `/admin/orders/[id]` | Line items, totals, shipping address, payments. Move status, set payment state, leave an internal note. **Administrators** also get "Edit order": rewrite the lines, quantities, agreed prices, delivery charge, discount and address, until it ships. |
 | `/admin/products` | Catalogue **including hidden products**, low-stock filter, inline stock editing per row. |
 | `/admin/products/new` | Create a product with all four standard sizes priced. |
 | `/admin/products/[id]` | Edit details, prices and stock per size, add or remove extra sizes, upload images, delete. |
 | `/admin/categories` | Rename, show/hide, reorder with ↑ ↓, create, delete. |
+| `/admin/combos` | Bundles **including parked ones**, per-size prices, how many of each can be made from stock, and the coverage table: how much of the campaign leans on each perfume, plus the ones no combo carries. |
+| `/admin/combos/new` | Build a combo: pick the perfumes in order, then price the whole bundle at each size. |
+| `/admin/combos/[id]` | Edit contents, sizes and prices, upload a group shot, delete. |
 | `/admin/customers` | Search accounts, filter by panel access. |
 | `/admin/customers/[id]` | Lifetime value, order history, enable/disable, move between roles. |
 | `/admin/roles` | Create roles and tick their menu permissions. |
+| `/admin/pricing` | The price sheet: buying price, current selling price, an editable new price and the profit/margin that falls out. Changes are batched and **wait for approval** — nothing reaches the shop until an administrator applies them. |
+| `/admin/pricing/[id]` | One submitted sheet, every old/new figure side by side, with approve and reject. |
+| `/admin/expenses` | What the shop spends. Photograph a supplier bill and it is read into a form for you to check; or type one in. Tracks what is still owed on part-paid bills, and maintains the categories. |
+| `/admin/reports` | Sales by day or month, with expenses and net profit against them. |
 
 ## How it is wired
 
@@ -122,7 +129,69 @@ the multipart boundary would be missing and the server could not parse them.
   is the authority, this table only exists so the UI does not offer a move that
   will bounce.
 - **Menu keys.** `MenuKey` in `lib/admin/types.ts` mirrors `MENUS` in
-  `app/utils/menus.py`. Adding a menu means touching both.
+  `app/utils/menus.py`. Adding a menu means touching **five** places, and
+  TypeScript will name four of them: `MenuKey`, `MENU_ICONS` in `icons.tsx`,
+  `MENU_TONE` in `tone.ts`, `LABELS` in `require.tsx`, and the `NAV` list in
+  `shell.tsx`. A new menu also needs a migration granting it to existing staff
+  roles — a role with no row for a menu is denied it, and `seed.py` only grants
+  the full set when it first creates the admin role. See
+  `e1a7c95f2d84_pricing_reviews`.
+- **The buying price never leaves the back office.** `cost_price` lives on
+  `ProductVariant` but is deliberately absent from `VariantOut`, which is the
+  schema `GET /products` serves to the public storefront. The pricing module has
+  its own schemas in `app/schemas/pricing.py` for exactly this reason — do not
+  "tidy up" by reusing the product ones. `tests/test_pricing.py` watches that
+  boundary rather than trusting it.
+- **Proposing a price changes nothing.** `POST /admin/pricing/reviews` writes a
+  row in `price_reviews` and stops. Only `/approve` touches
+  `product_variants`, and it is the single place in the app that moves prices in
+  bulk. The sheet flags any size already sitting in an undecided review, so
+  nobody proposes a second change against a price that is about to move.
+- **A price moved since the sheet was drawn up is shown, not blocked.** Each
+  line carries `current_price` alongside `from_price`; when they differ the line
+  is `drifted` and the reviewer is told that approving overwrites somebody
+  else's change. Judging that is the reviewer's job, not the API's.
+- **Unknown cost is null, never zero.** A 0.00 there would claim the bottle was
+  free and report a 100% margin on it. `profit` and `margin_pct` are null when
+  the cost is unknown, and the sheet shows a dash.
+- **Editing an order is narrower than managing orders.** Orders/manage is the
+  counter job — confirm, take a payment, mark it shipped — and a staff role can
+  hold it. Rewriting *what was bought* moves stock and restates a total the
+  reports have already counted, so `PUT /admin/orders/{id}` is guarded by
+  `Administrator` (the `admin` role slug itself) and cannot be granted from the
+  Roles screen. `canEdit()` in `components/admin/order-editor.tsx` decides
+  whether to show the button; the API is what actually refuses.
+- **An order can only be edited while it still holds its stock** — pending,
+  confirmed or processing, mirroring `STOCK_HELD_STATUSES` in
+  `app/services/order_service.py`. Keep `EDITABLE_STATUSES` in the editor in
+  step with it. After dispatch the contents are a record of what was sent;
+  cancelled and refunded orders have already handed their stock back, so
+  re-reserving against one would take it twice.
+- **The edit is a whole-object PUT, not a patch.** An absent `items` must never
+  be readable as "leave them alone" when stock is about to move. The flip side
+  is that anything the API does not return cannot be in the payload: the admin
+  note is write-only, so it is deliberately *not* editable here — it would be
+  erased by every save. It keeps its own PATCH endpoint.
+- **Order line editing lives in one place.** `components/admin/order-lines.tsx`
+  holds the `Line` shape, the pickers, the quantity/price table and the address
+  form, shared by `/admin/orders/new` and the edit panel. They compose the same
+  thing and must price it identically; two copies would be two chances for a
+  counter order and an edited one to disagree. The one difference is
+  `headroom` — on an edit the quantity cap is the shelf *plus* what this order
+  is already holding, because the API restocks before it re-reserves.
+- **A read receipt is never saved for you.** Uploading a bill calls
+  `/admin/expenses/read-receipt`, which stores the photograph, sends it to a
+  vision model and returns a *draft* — it writes no expense. The panel fills the
+  form with it and a person presses Save. This is deliberate and should stay
+  that way: the bills are handwritten, often in Bengali numerals, and a misread
+  total does not announce itself — it just moves the month's profit. The draft
+  carries `confidence` and `warnings`; show both.
+- **A bill's total and what was paid are different figures.** `amount` is the
+  whole cost and is what the report charges the month for, whether or not the
+  supplier has been settled; `amount_paid` is the cash that actually moved.
+  `amount_due` is derived by the API from the pair — never subtract for
+  yourself, or the panel and the report will disagree. Omitting `amount_paid`
+  on create means *paid in full*; sending `"0"` means *nothing paid yet*.
 - **Dropdowns are the panel's own**, never a native `<select>`. That control
   renders its list with the operating system's widget: it ignores the panel's
   type and colour, looks different on every platform, and cannot show a second

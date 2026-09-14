@@ -328,7 +328,7 @@ async def test_an_advance_is_written_into_the_ledger(client, admin_token):
 async def test_paying_more_than_the_order_is_refused(client, admin_token):
     response = await _one_thousand_taka_order(client, admin_token, amount_paid="2000.00")
     assert response.status_code == 422, response.text
-    assert "more than the order total" in response.json()["detail"]
+    assert "more than the order total" in response.json()["error"]["message"]
 
 
 async def test_settling_the_due_closes_the_order_out(client, admin_token):
@@ -375,7 +375,7 @@ async def test_collecting_more_than_is_owed_is_refused(client, admin_token):
         headers=auth(admin_token),
     )
     assert response.status_code == 422, response.text
-    assert "still owed" in response.json()["detail"]
+    assert "still owed" in response.json()["error"]["message"]
 
 
 async def test_marking_an_order_paid_by_hand_clears_the_due(client, admin_token):
@@ -401,7 +401,7 @@ async def test_partial_cannot_be_asserted_by_hand(client, admin_token):
         headers=auth(admin_token),
     )
     assert response.status_code == 422, response.text
-    assert "Record a payment" in response.json()["detail"]
+    assert "Record a payment" in response.json()["error"]["message"]
 
 
 async def test_the_due_rides_along_on_the_orders_list(client, admin_token):

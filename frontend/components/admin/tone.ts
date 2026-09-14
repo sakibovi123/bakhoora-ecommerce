@@ -59,8 +59,11 @@ export const MENU_TONE: Record<MenuKey, Tone> = {
   orders: "blue",
   products: "amber",
   categories: "amber",
+  combos: "amber",
   customers: "plum",
   roles: "plum",
   expenses: "green",
+  // Money, like the dashboard and expenses — this screen is about margin.
+  pricing: "green",
   settings: "neutral",
 };

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import {
   IconChevronLeft,
+  IconEdit,
   IconPrinter,
   IconSave,
   IconSpinner,
@@ -13,6 +14,7 @@ import {
 } from "@/components/admin/icons";
 import { useConfirm } from "@/components/admin/dialog";
 import { Dropdown } from "@/components/admin/dropdown";
+import { OrderEditor, canEdit } from "@/components/admin/order-editor";
 import { Require } from "@/components/admin/require";
 import { useToast } from "@/components/admin/toast";
 import {
@@ -56,7 +58,7 @@ export default function OrderDetailPage() {
 
 function OrderDetailScreen() {
   const { id } = useParams<{ id: string }>();
-  const { token, can } = useAuth();
+  const { token, can, user } = useAuth();
   const { notify } = useToast();
   const confirm = useConfirm();
   const router = useRouter();
@@ -71,6 +73,7 @@ function OrderDetailScreen() {
   const [nextStatus, setNextStatus] = useState<OrderStatus | "">("");
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus | "">("");
   const [note, setNote] = useState("");
+  const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -145,6 +148,15 @@ function OrderDetailScreen() {
         }
         actions={
           <>
+            {/* Offered only to the owner, and only while the order still holds
+                its stock. The API refuses both independently — this just keeps
+                a button off the screen that would always 403 or 422. */}
+            {canEdit(order, user?.role.slug) ? (
+              <Button tone="ghost" onClick={() => setEditing((open) => !open)}>
+                <IconEdit />
+                {editing ? "Stop editing" : "Edit order"}
+              </Button>
+            ) : null}
             <LinkButton href={`/admin/orders/${order.id}/invoice`} tone="ghost">
               <IconPrinter />
               Invoice
@@ -167,13 +179,35 @@ function OrderDetailScreen() {
         </Pill>
       </div>
 
+      {editing ? (
+        <OrderEditor
+          order={order}
+          onCancel={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            reload();
+          }}
+        />
+      ) : null}
+
       <div className="grid gap-3 xl:grid-cols-[2fr_1fr]">
         <div className="space-y-3">
           <Panel title="Items" bodyClassName="p-0">
             <Table head={["Product", "Size", "SKU", "Unit", "Qty", "Line"]}>
               {order.items.map((item) => (
                 <Row key={item.id}>
-                  <Cell className="text-ink">{item.product_name}</Cell>
+                  <Cell className="text-ink">
+                    {item.product_name}
+                    {/* What actually went in the box. Snapshotted on the line,
+                        so it keeps saying what shipped even after the campaign
+                        is edited or deleted — which is what the person packing
+                        it and the person handling a return both need. */}
+                    {item.components.length ? (
+                      <span className="mt-0.5 block text-xs text-muted">
+                        {item.components.map((part) => part.product_name).join(", ")}
+                      </span>
+                    ) : null}
+                  </Cell>
                   <Cell className="text-muted">{item.variant_name}</Cell>
                   <Cell className="font-mono text-xs text-muted">{item.sku}</Cell>
                   <Cell className="text-right [font-variant-numeric:tabular-nums]">

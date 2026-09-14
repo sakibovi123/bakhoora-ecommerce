@@ -207,7 +207,9 @@ DEBUG=true
 # --- Supabase database -------------------------------------------------------
 # Dashboard > Project Settings > Database > Connection string.
 # Supabase hosts exactly one database ("postgres"); the app lives in its
-# "public" schema. There is no local/docker postgres any more.
+# "public" schema. This file is for real data; for day-to-day work use
+# .env.dev and a local Postgres — see "Which database it talks to", which has
+# the measured latency difference and the one-line docker command.
 #
 # Runtime pool: "Transaction pooler" (port 6543).
 DATABASE_URL=postgresql://postgres.<project-ref>:<db-password>@aws-0-<region>.pooler.supabase.com:6543/postgres
@@ -5354,6 +5356,39 @@ ENV_FILE=.env.dev uv run uvicorn app.main:app --reload --port 8090
 # Supabase
 uv run uvicorn app.main:app --reload --port 8090
 ```
+
+**Use `.env.dev` for development, and mean it.** The Supabase project is in
+`ap-southeast-2` (Sydney). From Dhaka that is a ~300ms round trip, and the
+runtime connects through the transaction pooler with `NullPool` — no client-side
+connection reuse — so every request pays a fresh TLS and password handshake on
+top. Measured, one request doing a single `SELECT 1`:
+
+| Setup | Per request |
+|---|---|
+| Supabase pooler `:6543` + NullPool (what `.env` does) | **3349 ms** |
+| Supabase pooler `:6543`, connection reused | 1535 ms |
+| Supabase session pooler `:5432`, connection reused | 893 ms |
+| Local Postgres (`.env.dev`) | **1.2 ms** |
+
+A real endpoint issues several queries, so those numbers multiply. The test
+suite is the extreme case: it rebuilds a schema per test, which took over twenty
+minutes against Supabase and takes seconds locally.
+
+The local database is an ordinary Postgres 16 on port 5433 with the credentials
+`.env.dev` already holds:
+
+```bash
+docker run -d --name bakhoora-pg \
+  -e POSTGRES_USER=devuser -e POSTGRES_PASSWORD=<the one in .env.dev> \
+  -e POSTGRES_DB=bakhoora_dev \
+  -p 5433:5432 -v bakhoora-pgdata:/var/lib/postgresql/data postgres:16
+
+ENV_FILE=.env.dev uv run alembic upgrade head
+ENV_FILE=.env.dev uv run python -m app.db.seed
+```
+
+`docker start bakhoora-pg` brings it back after a reboot; the named volume keeps
+the data. The same prefix works for the tests: `ENV_FILE=.env.dev uv run pytest`.
 
 `ENV_FILE` applies to Alembic and the seed script too, since both read the same
 settings object:

@@ -11,7 +11,7 @@ from app.core.exceptions import AuthenticationError, PermissionDeniedError
 from app.core.security import decode_token
 from app.db.session import get_db
 from app.models.user import User
-from app.utils.menus import MANAGE, VIEW, Action, menu_label
+from app.utils.menus import ADMIN_ROLE_SLUG, MANAGE, VIEW, Action, menu_label
 
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl=f"{settings.API_V1_PREFIX}/auth/token", auto_error=False
@@ -52,6 +52,32 @@ async def get_current_admin(user: CurrentUser) -> User:
 AdminUser = Annotated[User, Depends(get_current_admin)]
 
 
+async def get_administrator(user: AdminUser) -> User:
+    """The `admin` role itself, not merely a role that can manage something.
+
+    Deliberately not `menu_guard(..., MANAGE)`. "Manage" means *may move records
+    forward in this menu* — a counter assistant given Orders/manage should be
+    able to confirm an order, take a payment and mark it shipped, because that
+    is the job. This guard is the narrower "is the owner", for the few actions
+    where a mistake rewrites history rather than advancing it.
+
+    Today that is exactly one thing: editing a placed order's lines and prices,
+    which moves stock and restates a figure the reports have already counted.
+    The check is on the slug rather than a permission flag on purpose — the
+    point is that it cannot be handed out from the Roles screen.
+    """
+    if user.role is None or user.role.slug != ADMIN_ROLE_SLUG:
+        raise PermissionDeniedError(
+            f"Only an administrator can do that. Your role is {user.role.name}."
+            if user.role
+            else "Only an administrator can do that."
+        )
+    return user
+
+
+Administrator = Annotated[User, Depends(get_administrator)]
+
+
 def menu_guard(menu: str, action: Action = VIEW):
     """Dependency requiring one menu permission.
 
@@ -79,10 +105,14 @@ ProductsViewer = menu_guard("products")
 ProductsManager = menu_guard("products", MANAGE)
 CategoriesViewer = menu_guard("categories")
 CategoriesManager = menu_guard("categories", MANAGE)
+CombosViewer = menu_guard("combos")
+CombosManager = menu_guard("combos", MANAGE)
 CustomersViewer = menu_guard("customers")
 CustomersManager = menu_guard("customers", MANAGE)
 RolesViewer = menu_guard("roles")
 RolesManager = menu_guard("roles", MANAGE)
+PricingViewer = menu_guard("pricing")
+PricingManager = menu_guard("pricing", MANAGE)
 ExpensesViewer = menu_guard("expenses")
 ExpensesManager = menu_guard("expenses", MANAGE)
 SettingsViewer = menu_guard("settings")

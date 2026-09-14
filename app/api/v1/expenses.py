@@ -3,7 +3,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, File, Query, UploadFile, status
 from pydantic import BaseModel
 
 from app.api.deps import DbSession, ExpensesManager, ExpensesViewer, PageParams
@@ -14,8 +14,9 @@ from app.schemas.expense import (
     ExpenseCreate,
     ExpenseOut,
     ExpenseUpdate,
+    ReceiptDraft,
 )
-from app.services import expense_service
+from app.services import expense_service, receipt_service
 
 # Admin-only: there is no storefront view of what the shop spends.
 router = APIRouter(prefix="/admin", tags=["expenses"])
@@ -34,6 +35,9 @@ class ExpensePage(BaseModel):
     size: int
     pages: int
     total_spent: Decimal
+    # What is still owed across the same range. Separate from `total_spent`,
+    # which is the full cost whether or not it has been handed over.
+    total_outstanding: Decimal
 
 
 # --- categories -------------------------------------------------------------
@@ -88,7 +92,7 @@ async def list_expenses(
     end: Annotated[date | None, Query(description="Last day, inclusive")] = None,
     sort: Literal["newest", "oldest", "amount_desc", "amount_asc"] = "newest",
 ):
-    items, total, spent = await expense_service.list_expenses(
+    items, total, spent, owed = await expense_service.list_expenses(
         db,
         page=params.page,
         size=params.size,
@@ -106,12 +110,34 @@ async def list_expenses(
         size=params.size,
         pages=pages,
         total_spent=spent,
+        total_outstanding=owed,
     )
 
 
 @router.post("/expenses", response_model=ExpenseOut, status_code=status.HTTP_201_CREATED)
 async def create_expense(data: ExpenseCreate, db: DbSession, _: ExpensesManager):
     return await expense_service.create_expense(db, data)
+
+
+@router.post("/expenses/read-receipt", response_model=ReceiptDraft)
+async def read_receipt(
+    db: DbSession,
+    _: ExpensesManager,
+    file: Annotated[UploadFile, File(description="A photograph of a supplier bill")],
+):
+    """Read a photographed bill into a draft. Saves nothing.
+
+    The reply is a filled-in form, not a record: the panel shows it beside the
+    photograph and a person presses Save, which is an ordinary POST to
+    /expenses carrying `receipt_url` from here. A total misread off handwriting
+    does not announce itself — it just moves the month's profit — so a person
+    sees every figure before it counts towards anything.
+
+    Guarded by ExpensesManager rather than ExpensesViewer even though it writes
+    no row: it spends OpenRouter credit, so read-only staff cannot run up a
+    bill by uploading photographs.
+    """
+    return await receipt_service.read_receipt(db, file)
 
 
 @router.get("/expenses/{expense_id}", response_model=ExpenseOut)

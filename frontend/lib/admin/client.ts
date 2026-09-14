@@ -2,6 +2,9 @@ import type {
   AdminUser,
   Granularity,
   Category,
+  Combo,
+  ComboInput,
+  StockCoverage,
   CustomerDetail,
   Dashboard,
   Me,
@@ -22,6 +25,11 @@ import type {
   ExpenseInput,
   ExpensePage,
   ExpenseQuery,
+  PriceReview,
+  PriceReviewApplied,
+  PriceReviewPage,
+  PriceSheetRow,
+  ReceiptDraft,
   Product,
   ProductInput,
   ShopSettings,
@@ -176,6 +184,12 @@ export interface ProductQuery {
   sort?: "newest" | "oldest" | "name" | "price_asc" | "price_desc";
 }
 
+export interface ComboQuery {
+  search?: string | null;
+  /** Null shows both; the panel uses it to isolate switched-off combos. */
+  active?: boolean | null;
+}
+
 export interface ReportQuery {
   /** ISO dates. Omitted, the API picks the last 30 days or 12 months. */
   start?: string | null;
@@ -201,7 +215,13 @@ export interface UserQuery {
 }
 
 export interface ManualOrderInput {
-  items: { variant_id: string; quantity: number }[];
+  /** Each line is one or the other, never both. */
+  items: {
+    variant_id?: string;
+    combo_size_id?: string;
+    quantity: number;
+    unit_price?: string;
+  }[];
   shipping_address: Record<string, unknown>;
   user_id?: string | null;
   payment_method: string;
@@ -213,6 +233,24 @@ export interface ManualOrderInput {
   amount_paid?: string | null;
   customer_note?: string | null;
   admin_note?: string | null;
+}
+
+/**
+ * The body `PUT /admin/orders/{id}` wants — the whole order, not a patch.
+ *
+ * Deliberately without status, payment status or payment method: those move
+ * through their own endpoint, with their own transition rules. Money already
+ * collected is untouched too — an edit changes what was *bought*, and the
+ * payment badge is re-derived from the new total.
+ *
+ * `items` is required and must be non-empty. An order with no lines is a
+ * deletion, which has its own endpoint because it restocks and warns.
+ */
+export interface OrderEditInput {
+  items: ManualOrderInput["items"];
+  shipping_address: Record<string, unknown>;
+  shipping_fee?: string | null;
+  discount_total?: string | null;
 }
 
 /** A collection against an order — the advance, or the balance on delivery. */
@@ -258,6 +296,71 @@ export const adminApi = {
 
   deleteExpense: (token: string, id: string) =>
     call<void>(`/admin/expenses/${id}`, token, { method: "DELETE" }),
+
+  /**
+   * Send a photographed bill to be read. Saves nothing.
+   *
+   * The reply is a filled-in form: the caller shows it beside the photograph,
+   * lets a person correct it, and then calls `createExpense` with the draft's
+   * `receipt_url` carried through. Slower than the other calls by a wide
+   * margin — a vision model is reading a photograph — so give it a spinner.
+   */
+  readReceipt: (token: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    // No Content-Type header: the browser has to set the multipart boundary.
+    return call<ReceiptDraft>("/admin/expenses/read-receipt", token, {
+      method: "POST",
+      body: form,
+    });
+  },
+
+  // --- pricing ---
+  //
+  // Admin-only: every response carries the buying price.
+
+  priceSheet: (
+    token: string,
+    params: {
+      search?: string | null;
+      category_id?: string | null;
+      active_only?: boolean;
+      sort?: "name" | "margin_low" | "margin_high" | "price_high" | "price_low";
+    } = {},
+  ) => call<PriceSheetRow[]>(`/admin/pricing/sheet${query({ ...params })}`, token),
+
+  priceReviews: (
+    token: string,
+    params: { page?: number; size?: number; status?: string | null } = {},
+  ) => call<PriceReviewPage>(`/admin/pricing/reviews${query({ ...params })}`, token),
+
+  priceReview: (token: string, id: string) =>
+    call<PriceReview>(`/admin/pricing/reviews/${id}`, token),
+
+  /** Write the sheet down. Moves no price — approval does that. */
+  proposePrices: (
+    token: string,
+    input: {
+      lines: { variant_id: string; cost_price?: string | null; price: string }[];
+      note?: string | null;
+    },
+  ) =>
+    call<PriceReview>("/admin/pricing/reviews", token, {
+      method: "POST",
+      body: body(input),
+    }),
+
+  approvePrices: (token: string, id: string, note?: string | null) =>
+    call<PriceReviewApplied>(`/admin/pricing/reviews/${id}/approve`, token, {
+      method: "POST",
+      body: body({ note: note ?? null }),
+    }),
+
+  rejectPrices: (token: string, id: string, note?: string | null) =>
+    call<PriceReview>(`/admin/pricing/reviews/${id}/reject`, token, {
+      method: "POST",
+      body: body({ note: note ?? null }),
+    }),
 
   expenseCategories: (token: string) =>
     call<ExpenseCategory[]>("/admin/expense-categories", token),
@@ -397,6 +500,39 @@ export const adminApi = {
       body: body({ items }),
     }),
 
+  // --- combos ---
+  // The list is deliberately uncached on the API: this is the screen someone
+  // reads availability off to decide whether to restock or retire a campaign.
+  combos: (token: string, params: ComboQuery = {}) =>
+    call<Combo[]>(`/admin/combos${query({ ...params })}`, token),
+
+  combo: (token: string, id: string) => call<Combo>(`/admin/combos/${id}`, token),
+
+  createCombo: (token: string, input: ComboInput) =>
+    call<Combo>("/combos", token, { method: "POST", body: body(input) }),
+
+  updateCombo: (token: string, id: string, input: Partial<ComboInput>) =>
+    call<Combo>(`/combos/${id}`, token, { method: "PATCH", body: body(input) }),
+
+  deleteCombo: (token: string, id: string) =>
+    call<void>(`/combos/${id}`, token, { method: "DELETE" }),
+
+  reorderCombos: (token: string, items: { id: string; position: number }[]) =>
+    call<Combo[]>("/admin/combos/reorder", token, { method: "PATCH", body: body({ items }) }),
+
+  uploadComboImage: (token: string, id: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    // No Content-Type header: the browser has to set the multipart boundary.
+    return call<Combo>(`/combos/${id}/image`, token, { method: "POST", body: form });
+  },
+
+  comboStockCoverage: (token: string, includeInactive = true) =>
+    call<StockCoverage>(
+      `/admin/combos/stock-coverage${query({ include_inactive: includeInactive })}`,
+      token,
+    ),
+
   // --- orders ---
   orders: (token: string, params: OrderQuery = {}) =>
     call<Page<OrderListItem>>(`/admin/orders${query({ ...params })}`, token),
@@ -426,6 +562,14 @@ export const adminApi = {
 
   createOrder: (token: string, input: ManualOrderInput) =>
     call<Order>("/admin/orders", token, { method: "POST", body: body(input) }),
+
+  /**
+   * Rewrite a placed order. Administrator only, and only before it ships —
+   * the API refuses both, so a panel that offers it to the wrong person or the
+   * wrong order gets a clear 403 or 422 rather than a broken record.
+   */
+  editOrder: (token: string, id: string, input: OrderEditInput) =>
+    call<Order>(`/admin/orders/${id}`, token, { method: "PUT", body: body(input) }),
 
   recordPayment: (token: string, id: string, input: PaymentInput) =>
     call<Order>(`/admin/orders/${id}/payments`, token, {

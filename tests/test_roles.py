@@ -1,45 +1,7 @@
 from app.utils.menus import MENUS
-from tests.conftest import auth, role_id, standard_variants
+from tests.conftest import auth, role_id, staff_account, standard_variants
 
 ALL_MENUS = {menu.key for menu in MENUS}
-
-
-async def _staff(client, admin_token, *, name, permissions, email=None, is_staff=True):
-    """Create a role, put a fresh account on it, and return that account's token."""
-    created = await client.post(
-        "/api/v1/admin/roles",
-        json={"name": name, "is_staff": is_staff, "permissions": permissions},
-        headers=auth(admin_token),
-    )
-    assert created.status_code == 201, created.text
-    role = created.json()
-
-    address = email or f"{role['slug']}@test.dev"
-    await client.post(
-        "/api/v1/auth/register",
-        json={"email": address, "password": "Password123", "full_name": name},
-    )
-    me = (
-        await client.post(
-            "/api/v1/auth/login", json={"email": address, "password": "Password123"}
-        )
-    ).json()["access_token"]
-    user_id = (await client.get("/api/v1/auth/me", headers=auth(me))).json()["id"]
-
-    assigned = await client.patch(
-        f"/api/v1/admin/users/{user_id}",
-        json={"role_id": role["id"]},
-        headers=auth(admin_token),
-    )
-    assert assigned.status_code == 200, assigned.text
-
-    # Re-login so the token belongs to the account in its new role.
-    token = (
-        await client.post(
-            "/api/v1/auth/login", json={"email": address, "password": "Password123"}
-        )
-    ).json()["access_token"]
-    return role, token
 
 
 # --- catalogue -------------------------------------------------------------
@@ -66,7 +28,7 @@ async def test_system_roles_are_listed_with_their_holders(client, admin_token):
 # --- creating roles --------------------------------------------------------
 
 async def test_manage_implies_view(client, admin_token):
-    role, _ = await _staff(
+    role, _ = await staff_account(
         client,
         admin_token,
         name="Fulfilment",
@@ -77,7 +39,7 @@ async def test_manage_implies_view(client, admin_token):
 
 
 async def test_permissions_that_grant_nothing_are_not_stored(client, admin_token):
-    role, _ = await _staff(
+    role, _ = await staff_account(
         client,
         admin_token,
         name="Empty Handed",
@@ -116,7 +78,7 @@ async def test_repeated_menu_is_rejected(client, admin_token):
 
 
 async def test_duplicate_role_name_is_rejected(client, admin_token):
-    await _staff(client, admin_token, name="Support", permissions=[])
+    await staff_account(client, admin_token, name="Support", permissions=[])
     clash = await client.post(
         "/api/v1/admin/roles", json={"name": "support"}, headers=auth(admin_token)
     )
@@ -129,7 +91,7 @@ async def test_permissions_are_enforced_by_the_api_not_just_the_menu(
     client, admin_token, customer_token
 ):
     """A read-only orders role: sees orders, cannot touch them, cannot see products."""
-    _, token = await _staff(
+    _, token = await staff_account(
         client,
         admin_token,
         name="Support",
@@ -154,7 +116,7 @@ async def test_permissions_are_enforced_by_the_api_not_just_the_menu(
 
 
 async def test_read_only_role_cannot_write(client, admin_token, customer_token):
-    _, token = await _staff(
+    _, token = await staff_account(
         client,
         admin_token,
         name="Catalogue Reader",
@@ -172,7 +134,7 @@ async def test_read_only_role_cannot_write(client, admin_token, customer_token):
 
 
 async def test_manage_permission_allows_the_write(client, admin_token):
-    _, token = await _staff(
+    _, token = await staff_account(
         client,
         admin_token,
         name="Catalogue Editor",
@@ -187,7 +149,7 @@ async def test_manage_permission_allows_the_write(client, admin_token):
 
 
 async def test_non_staff_role_cannot_open_the_panel_at_all(client, admin_token):
-    _, token = await _staff(
+    _, token = await staff_account(
         client,
         admin_token,
         name="Wholesale Buyer",
@@ -201,7 +163,7 @@ async def test_non_staff_role_cannot_open_the_panel_at_all(client, admin_token):
 
 
 async def test_me_reports_the_permission_map(client, admin_token):
-    _, token = await _staff(
+    _, token = await staff_account(
         client,
         admin_token,
         name="Stockist",
@@ -225,7 +187,7 @@ async def test_a_customer_has_no_permissions(client, customer_token):
 # --- editing and deleting roles --------------------------------------------
 
 async def test_permissions_are_replaced_wholesale_on_update(client, admin_token):
-    role, token = await _staff(
+    role, token = await staff_account(
         client,
         admin_token,
         name="Shifting",
@@ -244,7 +206,7 @@ async def test_permissions_are_replaced_wholesale_on_update(client, admin_token)
 
 async def test_updating_permissions_keeps_a_menu_the_role_already_held(client, admin_token):
     """Regression: replacing the collection wholesale collided on (role_id, menu)."""
-    role, _ = await _staff(
+    role, _ = await staff_account(
         client,
         admin_token,
         name="Overlapping",
@@ -274,7 +236,7 @@ async def test_updating_permissions_keeps_a_menu_the_role_already_held(client, a
 
 
 async def test_dropping_staff_clears_the_menus(client, admin_token):
-    role, _ = await _staff(
+    role, _ = await staff_account(
         client, admin_token, name="Demoted", permissions=[{"menu": "orders", "can_manage": True}]
     )
     updated = await client.patch(
@@ -323,7 +285,7 @@ async def test_system_roles_can_still_be_renamed(client, admin_token, session_fa
 
 
 async def test_a_role_in_use_cannot_be_deleted(client, admin_token):
-    role, _ = await _staff(client, admin_token, name="Occupied", permissions=[])
+    role, _ = await staff_account(client, admin_token, name="Occupied", permissions=[])
     blocked = await client.delete(
         f"/api/v1/admin/roles/{role['id']}", headers=auth(admin_token)
     )
@@ -342,7 +304,7 @@ async def test_an_empty_role_can_be_deleted(client, admin_token):
 
 
 async def test_only_a_roles_manager_can_change_roles(client, admin_token):
-    _, token = await _staff(
+    _, token = await staff_account(
         client,
         admin_token,
         name="Role Reader",

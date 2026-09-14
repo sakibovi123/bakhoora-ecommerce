@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.core.cache import (
     CATEGORIES,
+    COMBOS,
     ORDERS,
     PRODUCTS,
     REPORTS,
@@ -31,6 +32,7 @@ from app.core.cache import (
     cache,
 )
 from app.models.category import Category
+from app.models.combo import Combo, ComboItem, ComboSize
 from app.models.expense import Expense, ExpenseCategory
 from app.models.order import Order, OrderItem
 from app.models.payment import Payment
@@ -43,8 +45,15 @@ _SESSION_KEY = "pending_cache_namespaces"
 # deleting one moves products, so category writes clear the product cache too.
 NAMESPACES: dict[type, frozenset[str]] = {
     Category: frozenset({CATEGORIES, PRODUCTS}),
-    Product: frozenset({PRODUCTS}),
-    ProductVariant: frozenset({PRODUCTS}),
+    Combo: frozenset({COMBOS}),
+    ComboItem: frozenset({COMBOS}),
+    ComboSize: frozenset({COMBOS}),
+    # A product write can take an oil off sale and a variant write can empty
+    # its stock, and a combo is only buyable while every oil in it is. Both
+    # therefore clear the combo shelf as well as the product one — the same
+    # coupling the module docstring describes for checkout and stock.
+    Product: frozenset({PRODUCTS, COMBOS}),
+    ProductVariant: frozenset({PRODUCTS, COMBOS}),
     ProductImage: frozenset({PRODUCTS}),
     # REPORTS, not REPORTS_ARCHIVE: an order lands in the range it was placed
     # in, so a range that has already closed cannot gain one, and the archive is
@@ -66,7 +75,7 @@ NAMESPACES: dict[type, frozenset[str]] = {
     # The delivery charge is part of every cart total the storefront quotes and
     # the currency is on every price it prints, so a settings write clears the
     # product and category caches too rather than only its own.
-    ShopSettings: frozenset({SETTINGS, PRODUCTS, CATEGORIES}),
+    ShopSettings: frozenset({SETTINGS, PRODUCTS, CATEGORIES, COMBOS}),
 }
 
 
