@@ -7,7 +7,7 @@ ink type, one amber accent, numbered section markers, scroll reveals.
 
 ```bash
 npm install
-npm run dev          # http://localhost:3000
+npm run dev          # http://localhost:3002 (pinned)
 npm run build        # production build
 npm run typecheck
 ```

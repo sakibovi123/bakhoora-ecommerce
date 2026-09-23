@@ -4,11 +4,13 @@ import path from "node:path";
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
+import { BrandLanes } from "@/components/home/brand-lanes";
+import { SectionHeading } from "@/components/home/section-heading";
+import { VelocityMarquee } from "@/components/home/velocity-marquee";
 import { ProductCard } from "@/components/product-card";
-import { CollectionArt } from "@/components/shop/collection-art";
 import { Reveal } from "@/components/reveal";
-import { SectionLabel } from "@/components/section-label";
 import { ShopFilters } from "@/components/shop-filters";
+import { ShopHero } from "@/components/shop/shop-hero";
 import { fetchProducts } from "@/lib/api";
 import { getCategory, isSortKey } from "@/lib/catalog";
 import { OILS } from "@/lib/types";
@@ -64,81 +66,95 @@ export default async function ShopPage({
   const photo = headerPhoto(category ? category.slug : "all");
   const filtered = Boolean((categorySlug && categorySlug !== "all") || search || inStockOnly);
 
+  // The houses strip at the foot of the page is drawn from the whole shelf,
+  // not the filtered view, so it never shrinks to one chip mid-search.
+  const { items: everything } = await fetchProducts("?size=100");
+  const brandsByKey = new Map<string, string>();
+  for (const product of everything) {
+    const brand = product.brand?.trim();
+    if (brand && !brandsByKey.has(brand.toLowerCase())) brandsByKey.set(brand.toLowerCase(), brand);
+  }
+  const brands = [...brandsByKey.values()].sort((a, b) => a.localeCompare(b));
+
+  const heading = search
+    ? `Results for “${search}”`
+    : category
+      ? `All ${category.name.toLowerCase()}`
+      : "All fragrances";
+
   return (
     <>
-      <section className="shell grid items-center gap-10 pb-12 pt-14 md:pt-20 lg:grid-cols-[1.1fr_1fr]">
-        <div>
-          <Reveal>
-            <SectionLabel>{category ? "Collection" : "The full range"}</SectionLabel>
-          </Reveal>
-          <Reveal delay={80}>
-            <h1 className="display-lg mt-8 max-w-3xl">
-              {category ? category.name : "Everything we pour."}
-            </h1>
-          </Reveal>
-          <Reveal delay={140}>
-            <p className="mt-7 max-w-xl leading-relaxed text-muted">
-              {category
-                ? category.blurb
-                : "Decants from bottles we import ourselves, and oil bought by the bottle and poured to order. Every size is the same fragrance — only the glass is smaller."}
-            </p>
-          </Reveal>
-        </div>
+      <ShopHero
+        kicker={category ? "Collection" : "The full range"}
+        title={category ? category.name : "Everything we pour."}
+        blurb={
+          category
+            ? category.blurb
+            : "Decants from bottles we import ourselves, and oil bought by the bottle and poured to order. Every size is the same fragrance — only the glass is smaller."
+        }
+        photo={photo}
+        art={categorySlug === OILS ? "oil" : category ? "decant" : "all"}
+        count={everything.length}
+      />
 
-        <Reveal delay={200}>
-          <div className="relative aspect-[4/3] overflow-hidden rounded-2xl bg-paper-2">
-            {photo ? (
-              /* eslint-disable-next-line @next/next/no-img-element */
-              <img
-                src={photo}
-                alt={category ? category.name : "Bakhoora decants and oils"}
-                className="h-full w-full object-cover"
-              />
-            ) : (
-              <div className="absolute inset-0 p-[6%]">
-                <CollectionArt kind={categorySlug === OILS ? "oil" : category ? "decant" : "all"} />
-              </div>
-            )}
-          </div>
-        </Reveal>
-      </section>
+      <VelocityMarquee
+        words={
+          categorySlug === OILS
+            ? ["Dab", "Warm", "Linger", "Oud", "Amber", "Musk", "Resin", "Stay"]
+            : ["Spray", "Wear", "Layer", "Compare", "Discover", "Decide", "Repeat", "Keep"]
+        }
+      />
 
       <div className="shell">
-        <Suspense fallback={<div className="h-24 border-y border-line" />}>
+        <Suspense fallback={<div className="h-20 border-b border-line" />}>
           <ShopFilters resultCount={products.length} />
         </Suspense>
+
+        <section className="py-12 md:py-16">
+          <SectionHeading title={heading} kicker={filtered ? "Filtered" : "Newest first"} />
+
+          {products.length === 0 ? (
+            <div className="mt-10 rounded-2xl bg-paper-2 px-6 py-24 text-center">
+              <span aria-hidden className="ember mx-auto block size-3" />
+              {/* Two different nothings: a filter that excluded everything, and a
+                  shop with nothing in it yet. Telling someone to "clear a filter"
+                  when there are no products at all just wastes their time. */}
+              {filtered ? (
+                <>
+                  <p className="mt-6 text-3xl font-medium">Nothing matches that.</p>
+                  <p className="mt-3 text-sm text-muted">Try clearing a filter or two.</p>
+                </>
+              ) : (
+                <>
+                  <p className="mt-6 text-3xl font-medium">No products yet.</p>
+                  <p className="mt-3 text-sm text-muted">
+                    Nothing is listed at the moment. Check back shortly.
+                  </p>
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="mt-10 grid grid-cols-2 gap-x-4 gap-y-10 md:grid-cols-3 lg:grid-cols-4 lg:gap-x-5">
+              {products.map((product, index) => (
+                <Reveal key={product.slug} delay={(index % 4) * 80}>
+                  <ProductCard product={product} variant="shelf" />
+                </Reveal>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
 
-      <section className="shell py-16 md:py-20">
-        {products.length === 0 ? (
-          <div className="border border-line py-28 text-center">
-            {/* Two different nothings: a filter that excluded everything, and a
-                shop with nothing in it yet. Telling someone to "clear a filter"
-                when there are no products at all just wastes their time. */}
-            {filtered ? (
-              <>
-                <p className="font-display text-3xl">Nothing matches that.</p>
-                <p className="mt-4 text-sm text-muted">Try clearing a filter or two.</p>
-              </>
-            ) : (
-              <>
-                <p className="font-display text-3xl">No products yet.</p>
-                <p className="mt-4 text-sm text-muted">
-                  Nothing is listed at the moment. Check back shortly.
-                </p>
-              </>
-            )}
+      {brands.length > 1 ? (
+        <section className="border-t border-line py-16 md:py-20">
+          <div className="shell">
+            <h2 className="text-2xl font-semibold tracking-[-0.02em]">Shop by house</h2>
           </div>
-        ) : (
-          <div className="grid gap-x-8 gap-y-16 sm:grid-cols-2 lg:grid-cols-3">
-            {products.map((product, index) => (
-              <Reveal key={product.slug} delay={(index % 3) * 90}>
-                <ProductCard product={product} index={index} />
-              </Reveal>
-            ))}
+          <div className="mt-6">
+            <BrandLanes brands={brands} />
           </div>
-        )}
-      </section>
+        </section>
+      ) : null}
     </>
   );
 }

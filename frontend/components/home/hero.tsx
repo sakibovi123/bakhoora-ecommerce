@@ -39,7 +39,7 @@ export function Hero() {
   }, []);
 
   return (
-    <section className="relative -mt-[var(--header-h)] flex min-h-[calc(100svh-2.5rem)] items-end overflow-hidden bg-night text-paper">
+    <section data-hero className="relative -mt-[var(--header-h)] flex min-h-[calc(100svh-2.5rem)] items-end overflow-hidden bg-night text-paper">
       {/* The room the coal sits in: a warm floor glow and a cold vignette. */}
       <div
         aria-hidden

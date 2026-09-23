@@ -14,17 +14,19 @@ import { useShop } from "@/lib/shop-settings";
 /**
  * Menu on the left, the name in the middle, the tools on the right.
  *
- * On the homepage the bar floats over the dark hero as clear glass with white
- * ink; once the hero has scrolled away (and on every other page) it frosts
- * over white. A hairline along its bottom edge fills with ember as you read
- * down the page.
+ * Over a dark hero (the homepage, the shop) the bar floats as clear glass
+ * with white ink; once the hero has scrolled away, and on every other page,
+ * it frosts over white. A hairline along its bottom edge fills with ember as
+ * you read down the page.
  */
 export function SiteHeader() {
   const { itemCount, open, isReady } = useCart();
   const shop = useShop();
   const { ready, user } = useAuth();
   const pathname = usePathname();
-  const [overHero, setOverHero] = useState(pathname === "/");
+  // Pages that open on a dark hero (marked data-hero) get the clear bar.
+  // The first paint guesses from the route; the scroll handler then measures.
+  const [overHero, setOverHero] = useState(pathname === "/" || pathname === "/shop");
   const [menuOpen, setMenuOpen] = useState(false);
   const progressRef = useRef<HTMLSpanElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
@@ -32,7 +34,8 @@ export function SiteHeader() {
   useEffect(() => {
     const onScroll = () => {
       const y = window.scrollY;
-      setOverHero(pathname === "/" && y < window.innerHeight - 120);
+      const hero = document.querySelector("[data-hero]");
+      setOverHero(hero ? hero.getBoundingClientRect().bottom > 90 : false);
       const max = document.documentElement.scrollHeight - window.innerHeight;
       if (progressRef.current) {
         progressRef.current.style.transform = `scaleX(${max > 0 ? y / max : 0})`;

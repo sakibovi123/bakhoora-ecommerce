@@ -59,11 +59,11 @@ COPY --from=build --chown=nextjs:nodejs /app/public ./public
 
 USER nextjs
 
-# Railway injects PORT; 3000 is only the local default. HOSTNAME must be
+# Railway injects PORT; 3002 is only the local default. HOSTNAME must be
 # 0.0.0.0 — the standalone server defaults to localhost, which the platform's
 # proxy cannot reach from outside the container.
-ENV PORT=3000 \
+ENV PORT=3002 \
     HOSTNAME=0.0.0.0
-EXPOSE 3000
+EXPOSE 3002
 
 CMD ["node", "server.js"]
