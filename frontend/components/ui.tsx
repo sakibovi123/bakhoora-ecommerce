@@ -6,11 +6,11 @@ type Tone = "ink" | "paper" | "outline";
 const TONES: Record<Tone, string> = {
   ink: "bg-ink text-paper hover:bg-ink-2",
   paper: "bg-paper text-ink hover:bg-paper-2",
-  outline: "border border-current text-ink hover:bg-ink hover:text-paper",
+  outline: "border border-current text-ink hover:bg-ink hover:text-paper hover:border-ink",
 };
 
 const BASE =
-  "label inline-flex items-center justify-center gap-2 px-7 py-4 transition-colors duration-300 disabled:cursor-not-allowed disabled:opacity-40";
+  "label inline-flex items-center justify-center gap-2 rounded-full px-7 py-4 transition-[background-color,color,border-color,transform] duration-300 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40";
 
 export function Button({
   tone = "ink",
@@ -61,9 +61,9 @@ export function ArrowLink({
       <span className="link-underline">{children}</span>
       <span
         aria-hidden
-        className="transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:translate-x-1.5"
+        className="transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
       >
-        →
+        ↗
       </span>
     </Link>
   );

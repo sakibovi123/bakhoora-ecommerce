@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { AnnouncementBar } from "@/components/announcement-bar";
 import { CartDrawer } from "@/components/cart-drawer";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
@@ -27,6 +28,7 @@ export function SiteChrome({ children }: { children: ReactNode }) {
       >
         Skip to content
       </a>
+      <AnnouncementBar />
       <SiteHeader />
       <main id="main">{children}</main>
       <SiteFooter />

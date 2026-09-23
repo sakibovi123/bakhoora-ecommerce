@@ -1,30 +1,49 @@
-import Link from "next/link";
-
-import { Marquee } from "@/components/marquee";
-import { ProductCard } from "@/components/product-card";
-import { Reveal } from "@/components/reveal";
-import { SectionLabel } from "@/components/section-label";
-import { ArrowLink, ButtonLink } from "@/components/ui";
-import { fetchProducts } from "@/lib/api";
-import { CATEGORIES } from "@/lib/catalog";
+import { BrandLanes } from "@/components/home/brand-lanes";
+import { FaqPanel } from "@/components/home/faq-panel";
+import { FeatureTiles } from "@/components/home/feature-tiles";
+import { Hero } from "@/components/home/hero";
+import { MetricsGrid, type Metric } from "@/components/home/metrics-grid";
+import { MoodTiles, type Mood } from "@/components/home/mood-tiles";
+import { ProductRail } from "@/components/home/product-rail";
+import { SectionHeading } from "@/components/home/section-heading";
+import { SmokeText } from "@/components/home/smoke-text";
+import { StepsRail } from "@/components/home/steps-rail";
+import { VelocityMarquee } from "@/components/home/velocity-marquee";
+import { fetchProducts, fetchShopSettings } from "@/lib/api";
+import { formatPrice } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-const PILLARS = [
+const VERBS = ["Pour", "Wear", "Layer", "Linger", "Compare", "Discover", "Burn", "Decide"];
+
+const MOODS: Mood[] = [
   {
-    index: "01",
-    title: "The same liquid",
-    body: "We import the bottle, then pour from it. Nothing is mixed, diluted or topped up — a 10ml decant is the house's own fragrance, in smaller glass.",
+    name: "Oud",
+    line: "Dark wood, smoke and leather. The heart of the house.",
+    query: "oud",
+    ground: ["#2a1d17", "#0b0b0c"],
+    ink: "paper",
   },
   {
-    index: "02",
-    title: "A size you will finish",
-    body: "Most of a 100ml bottle is still sitting there two years later, turning. Buy 6, 10, 15 or 30ml of something you will actually wear out.",
+    name: "Amber",
+    line: "Warm resins and a slow, sweet dry-down that stays on a scarf for days.",
+    query: "amber",
+    ground: ["#c9793d", "#5a2610"],
+    ink: "paper",
   },
   {
-    index: "03",
-    title: "Poured to order",
-    body: "Filled by hand the day it ships, into new glass, with a fresh pipette per fragrance so nothing carries over from the last one.",
+    name: "Resin",
+    line: "Frankincense and myrrh — the smell of a room after the bakhoor burns out.",
+    query: "resin",
+    ground: ["#e9e4dc", "#b9ada0"],
+    ink: "ink",
+  },
+  {
+    name: "Fresh",
+    line: "Citrus, sea air and clean musk, for Dhaka at forty degrees.",
+    query: "fresh",
+    ground: ["#f4f6f5", "#cfd8d6"],
+    ink: "ink",
   },
 ];
 
@@ -42,16 +61,20 @@ const STEPS = [
   {
     step: "03",
     title: "We pour it",
-    text: "Hand-filled into fresh glass, labelled with the fragrance and the size, sealed, and boxed.",
+    text: "Hand-filled into fresh glass with a fresh pipette, labelled with the fragrance and the size, sealed, and boxed.",
   },
   {
     step: "04",
     title: "It ships",
-    text: "Dhaka in 1–2 days, rest of Bangladesh in 2–4. Free over ৳3,000, ৳70 flat below it, cash on delivery.",
+    text: "Dhaka in 1–2 days, the rest of Bangladesh in 2–4, cash on delivery.",
   },
 ];
 
 const QUESTIONS = [
+  {
+    q: "What is a decant?",
+    a: "A smaller glass of a fragrance poured straight from the full bottle. The same liquid the house made — you are just not buying all 100ml of it at once.",
+  },
   {
     q: "Is it authentic?",
     a: "It is whatever we poured it out of, and we pour out of bottles we bought ourselves. We are an independent decanter — not an authorised dealer for any house, and we do not claim to be.",
@@ -64,267 +87,147 @@ const QUESTIONS = [
     q: "What about the oils?",
     a: "Bought by the bottle from the market and poured the same way. Alcohol-free, so they sit closer to the skin and last longer than a spray does.",
   },
+  {
+    q: "How long does delivery take?",
+    a: "Dhaka in one to two days, everywhere else in Bangladesh in two to four. You can pay the rider in cash when it arrives.",
+  },
 ];
 
 export default async function HomePage() {
-  // Featured is a flag on the product, so an empty shop simply drops the
-  // section rather than rendering a heading over nothing.
-  const { items: featured } = await fetchProducts("?featured=true&in_stock=true&size=6");
+  // Featured is a flag on the product. If the operator has flagged too few to
+  // fill a shelf, the newest in-stock bottles stand in rather than the
+  // section disappearing.
+  const [featured, catalogue, shop] = await Promise.all([
+    fetchProducts("?featured=true&in_stock=true&size=12"),
+    fetchProducts("?size=100&sort=newest"),
+    fetchShopSettings(),
+  ]);
+
+  const shelf =
+    featured.items.length >= 4
+      ? featured.items
+      : catalogue.items.filter((product) => product.inStock).slice(0, 12);
+
+  // Brands are typed by hand in the admin, so "Rayhaan" and "RAyhaan" are
+  // one house; the first spelling seen wins.
+  const brandsByKey = new Map<string, string>();
+  for (const product of catalogue.items) {
+    const brand = product.brand?.trim();
+    if (brand && !brandsByKey.has(brand.toLowerCase())) brandsByKey.set(brand.toLowerCase(), brand);
+  }
+  const brands = [...brandsByKey.values()].sort((a, b) => a.localeCompare(b));
+
+  // Only facts the shop can stand behind: counts come from the live catalogue,
+  // the rest from how the business actually runs.
+  const metrics: Metric[] = [
+    ...(catalogue.total > 0
+      ? [{ kicker: "On the shelf", title: "", count: catalogue.total, note: "Fragrances you can order today" }]
+      : []),
+    { kicker: "Sizes poured", title: "6 · 10 · 15 · 30ml", note: "Price per ml on every page" },
+    ...(brands.length > 1
+      ? [{ kicker: "Houses we pour", title: "", count: brands.length, note: "Designer, niche and Arabian" }]
+      : []),
+    { kicker: "Delivery", title: "Within 2–4 days", note: "Nationwide · Dhaka in 1–2" },
+    { kicker: "COD", title: "Cash on delivery", note: "Pay the rider when it arrives" },
+    ...(shop.freeDeliveryThreshold !== null
+      ? [
+          {
+            kicker: "Free delivery",
+            title: `Over ${formatPrice(shop.freeDeliveryThreshold, shop.currencySymbol)}`,
+            note: "Flat rate below it",
+          },
+        ]
+      : []),
+    { kicker: "Poured to order", title: "Filled the day it ships", note: "Never sitting in a vial for months" },
+    { kicker: "Clean pour", title: "Fresh pipette, every time", note: "Nothing carries over between fragrances" },
+    { kicker: "Oils", title: "Alcohol-free", note: "Close to the skin, long on it" },
+    { kicker: "Honest label", title: "Independent decanter", note: "Not an authorised dealer — and we say so" },
+    { kicker: "Payments", title: "bKash · Nagad · COD", note: "Whatever suits you" },
+    { kicker: "Support", title: "Sat–Thu, 10–8", note: "Phone and email, a real person" },
+  ];
 
   return (
     <>
-      {/* ---------------- hero ---------------- */}
-      <section className="shell grid gap-14 pb-16 pt-14 md:pb-24 md:pt-20 lg:grid-cols-[1.05fr_0.95fr] lg:items-center lg:gap-10">
-        <div>
-          <Reveal>
-            <SectionLabel>Decants · Perfume Oil</SectionLabel>
-          </Reveal>
+      <Hero />
 
-          <Reveal delay={80}>
-            <h1 className="display-xl mt-8 leading-[0.86]">
-              Wear it
-              <br />
-              <span className="italic text-accent">first</span>.
-            </h1>
-          </Reveal>
+      <VelocityMarquee words={VERBS} />
 
-          <Reveal delay={160}>
-            <p className="mt-9 max-w-md text-lg leading-relaxed text-muted">
-              We import the bottles and pour from them ourselves. The same fragrance the house
-              made, in 6, 10, 15 or 30ml — so a bottle you love is a decision, not a gamble.
-            </p>
-          </Reveal>
-
-          <Reveal delay={240}>
-            <div className="mt-11 flex flex-wrap items-center gap-4">
-              <ButtonLink href="/shop">Shop decants</ButtonLink>
-              <ArrowLink href="/about" className="px-3 py-4">
-                How we work
-              </ArrowLink>
-            </div>
-          </Reveal>
-
-          <Reveal delay={320}>
-            <dl className="mt-16 grid max-w-lg grid-cols-3 gap-6 border-t border-line pt-8">
-              {[
-                ["6–30 ml", "Sizes poured"],
-                ["৳3,000", "Free delivery over"],
-                ["2–4 d", "Delivery nationwide"],
-              ].map(([value, label]) => (
-                <div key={label}>
-                  <dt className="font-display text-3xl">{value}</dt>
-                  <dd className="label mt-2 text-muted">{label}</dd>
-                </div>
-              ))}
-            </dl>
-          </Reveal>
-        </div>
-
-        <Reveal delay={120} className="relative">
-          <div className="relative bg-paper-2 p-10 md:p-14">
-            {/* No hero product: the shop can be empty, and a homepage that hard-codes
-                a best seller starts lying the moment that product is delisted. The
-                two categories are the thing that is always true. */}
-            <div className="grid gap-px bg-line">
-              {CATEGORIES.map((category) => (
-                <Link
-                  key={category.slug}
-                  href={`/shop?category=${category.slug}`}
-                  className="group flex items-center justify-between gap-6 bg-paper px-7 py-8 transition-colors duration-500 hover:bg-ink hover:text-paper"
-                >
-                  <div>
-                    <p className="font-display text-3xl leading-none">{category.name}</p>
-                    <p className="label mt-3 text-muted transition-colors group-hover:text-paper/60">
-                      Shop the range
-                    </p>
-                  </div>
-                  <span
-                    aria-hidden
-                    className="text-2xl transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:translate-x-1.5"
-                  >
-                    →
-                  </span>
-                </Link>
-              ))}
-            </div>
-          </div>
-          <p className="label mt-5 flex items-center gap-3 text-muted">
-            <span aria-hidden className="animate-bounce">↓</span> Scroll
-          </p>
-        </Reveal>
-      </section>
-
-      <Marquee
-        items={[
-          "Free delivery over ৳3,000",
-          "Cash on delivery",
-          "Poured to order",
-          "Alcohol-free oils",
-          "6 · 10 · 15 · 30 ml",
-        ]}
-      />
-
-      {/* ---------------- 01 the idea ---------------- */}
-      <section className="shell py-24 md:py-36">
-        <Reveal>
-          <SectionLabel index="01">The idea</SectionLabel>
-        </Reveal>
-        <Reveal delay={80}>
-          <h2 className="display-lg mt-9 max-w-4xl">
-            A full bottle is a long marriage.{" "}
-            <span className="text-muted">Start with a few millilitres.</span>
-          </h2>
-        </Reveal>
-
-        <div className="mt-20 grid gap-12 md:grid-cols-3 md:gap-8">
-          {PILLARS.map((pillar, index) => (
-            <Reveal key={pillar.index} delay={index * 100}>
-              <article className="border-t border-line pt-7">
-                <p className="label text-accent">{pillar.index}</p>
-                <h3 className="mt-5 font-display text-3xl">{pillar.title}</h3>
-                <p className="mt-4 text-sm leading-relaxed text-muted">{pillar.body}</p>
-              </article>
-            </Reveal>
-          ))}
-        </div>
-      </section>
-
-      {/* ---------------- 02 collections ---------------- */}
-      <section className="bg-paper-2 py-24 md:py-36">
-        <div className="shell">
-          <Reveal>
-            <div className="flex flex-wrap items-end justify-between gap-6">
-              <div>
-                <SectionLabel index="02">The range</SectionLabel>
-                <h2 className="display-md mt-7 max-w-xl">Two ways to wear it.</h2>
-              </div>
-              <ArrowLink href="/shop">See everything</ArrowLink>
-            </div>
-          </Reveal>
-
-          <div className="mt-16 grid gap-px border border-line bg-line sm:grid-cols-2">
-            {CATEGORIES.map((category, index) => (
-              <Reveal key={category.slug} delay={index * 80}>
-                <Link
-                  href={`/shop?category=${category.slug}`}
-                  className="group flex h-full flex-col justify-between gap-10 bg-paper p-8 transition-colors duration-500 hover:bg-ink hover:text-paper"
-                >
-                  <div>
-                    <p className="label text-muted transition-colors group-hover:text-paper/50">
-                      0{index + 1}
-                    </p>
-                    <h3 className="mt-5 font-display text-4xl">{category.name}</h3>
-                    <p className="mt-4 text-sm leading-relaxed text-muted transition-colors group-hover:text-paper/70">
-                      {category.blurb}
-                    </p>
-                  </div>
-                  <span
-                    aria-hidden
-                    className="text-2xl transition-transform duration-500 group-hover:translate-x-2"
-                  >
-                    →
-                  </span>
-                </Link>
-              </Reveal>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ---------------- 03 featured ---------------- */}
-      {featured.length > 0 ? (
-        <section className="shell py-24 md:py-36">
-          <Reveal>
-            <div className="flex flex-wrap items-end justify-between gap-6">
-              <div>
-                <SectionLabel index="03">In stock now</SectionLabel>
-                <h2 className="display-md mt-7">The short list.</h2>
-              </div>
-              <ArrowLink href="/shop">All fragrances</ArrowLink>
-            </div>
-          </Reveal>
-
-          <div className="mt-16 grid gap-x-8 gap-y-16 sm:grid-cols-2 lg:grid-cols-3">
-            {featured.map((product, index) => (
-              <Reveal key={product.slug} delay={(index % 3) * 90}>
-                <ProductCard product={product} index={index} />
-              </Reveal>
-            ))}
+      {shelf.length > 0 ? (
+        <section className="shell pb-20 pt-6 md:pb-28">
+          <SectionHeading title="Most loved" kicker="Bestsellers" />
+          <div className="mt-10">
+            <ProductRail products={shelf} />
           </div>
         </section>
       ) : null}
 
-      {/* ---------------- 04 how it works ---------------- */}
-      <section className="bg-night py-24 text-paper md:py-36">
-        <div className="shell">
-          <Reveal>
-            <SectionLabel index="04" tone="paper">
-              How it works
-            </SectionLabel>
-          </Reveal>
-          <Reveal delay={80}>
-            <h2 className="display-lg mt-9 max-w-3xl text-paper">
-              Bottle in, vial out. Nothing in between.
-            </h2>
-          </Reveal>
-
-          <div className="mt-20 grid gap-14 sm:grid-cols-2 md:gap-10 lg:grid-cols-4">
-            {STEPS.map((item, index) => (
-              <Reveal key={item.step} delay={index * 100}>
-                <article className="border-t border-paper/20 pt-7">
-                  <p className="label text-accent-soft">{item.step}</p>
-                  <h3 className="mt-4 font-display text-3xl text-paper">{item.title}</h3>
-                  <p className="mt-5 text-sm leading-relaxed text-paper/60">{item.text}</p>
-                </article>
-              </Reveal>
-            ))}
-          </div>
+      <section className="shell pb-20 md:pb-28">
+        <SectionHeading title="Decants | Oils" kicker="Two ways to wear it" align="right" />
+        <div className="mt-8">
+          <FeatureTiles
+            tiles={[
+              {
+                href: "/shop?category=decants",
+                title: "Decants",
+                cta: "Shop decants",
+                shape: "flacon",
+                ground: "linear-gradient(160deg,#f3f2ef,#dcd9d3)",
+                tones: [
+                  ["#3b3b3f", "#0b0b0c"],
+                  ["#d99b6c", "#8a3a16"],
+                  ["#e8e2d6", "#9d8f7b"],
+                ],
+              },
+              {
+                href: "/shop?category=oils",
+                title: "Perfume Oil",
+                cta: "Shop oils",
+                shape: "vial",
+                ground: "linear-gradient(160deg,#1d1a18,#0b0b0c)",
+                tones: [
+                  ["#c9a227", "#6b4e12"],
+                  ["#b5651d", "#5c2f0d"],
+                  ["#e2b37c", "#8f5518"],
+                ],
+              },
+            ]}
+          />
         </div>
       </section>
 
-      {/* ---------------- 05 questions ---------------- */}
-      <section className="shell py-24 md:py-36">
-        <Reveal>
-          <SectionLabel index="05">Straight answers</SectionLabel>
-        </Reveal>
-        <Reveal delay={80}>
-          <h2 className="display-md mt-7 max-w-2xl">The three things everyone asks.</h2>
-        </Reveal>
-
-        <dl className="mt-16 border-t border-line">
-          {QUESTIONS.map((item, index) => (
-            <Reveal key={item.q} delay={index * 70}>
-              <div className="grid grid-cols-1 items-baseline gap-4 border-b border-line py-8 md:grid-cols-[18rem_1fr] md:gap-8">
-                <dt className="font-display text-2xl md:text-3xl">{item.q}</dt>
-                <dd className="max-w-2xl leading-relaxed text-muted">{item.a}</dd>
-              </div>
-            </Reveal>
-          ))}
-        </dl>
+      <section className="shell pb-20 md:pb-28">
+        <SectionHeading title="Moods" kicker="Choose yours" align="right" />
+        <div className="mt-8">
+          <MoodTiles moods={MOODS} />
+        </div>
       </section>
 
-      {/* ---------------- closing cta ---------------- */}
-      <section className="shell py-24 text-center md:py-40">
-        <Reveal>
-          <h2 className="display-lg mx-auto max-w-4xl">
-            Start with 6&nbsp;ml. <span className="text-muted">Commit later.</span>
-          </h2>
-        </Reveal>
-        <Reveal delay={100}>
-          <p className="mx-auto mt-8 max-w-lg leading-relaxed text-muted">
-            The smallest size costs less than a bad full-bottle decision, and tells you the same
-            thing.
-          </p>
-        </Reveal>
-        <Reveal delay={180}>
-          <div className="mt-11 flex flex-wrap justify-center gap-4">
-            <ButtonLink href="/shop">Shop everything</ButtonLink>
-            <ButtonLink href="/shop?category=oils" tone="outline">
-              Browse the oils
-            </ButtonLink>
+      {brands.length > 1 ? (
+        <section className="pb-20 md:pb-28">
+          <div className="shell">
+            <h2 className="text-2xl font-semibold tracking-[-0.02em]">Houses we pour</h2>
           </div>
-        </Reveal>
+          <div className="mt-6">
+            <BrandLanes brands={brands} />
+          </div>
+        </section>
+      ) : null}
+
+      <section className="shell pb-20 md:pb-28">
+        <p className="label text-muted">Why Bakhoora</p>
+        <SmokeText
+          text="Poured honestly, sent quickly"
+          className="mt-4 text-[clamp(2rem,4.5vw,3.25rem)] font-medium leading-[1.05] tracking-[-0.03em]"
+        />
+        <p className="mt-4 text-muted">A quick look at how the shop runs, and what is on the shelf right now.</p>
+        <div className="mt-10">
+          <MetricsGrid metrics={metrics} />
+        </div>
       </section>
+
+      <FaqPanel items={QUESTIONS} />
+
+      <StepsRail steps={STEPS} />
     </>
   );
 }

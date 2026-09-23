@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Poppins } from "next/font/google";
+import { Playfair_Display, Urbanist } from "next/font/google";
 
 import { SiteChrome } from "@/components/site-chrome";
 import { fetchShopSettings } from "@/lib/api";
@@ -8,12 +8,19 @@ import { ShopSettingsProvider } from "@/lib/shop-settings";
 
 import "./globals.css";
 
-// Poppins ships as static cuts, so the weights the UI actually uses have to be
-// listed explicitly — there is no variable axis to interpolate from.
-const poppins = Poppins({
+// Urbanist is variable, so every weight the UI reaches for comes from one file.
+const urbanist = Urbanist({
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
-  variable: "--font-poppins",
+  variable: "--font-urbanist",
+  display: "swap",
+});
+
+// The serif only sets the giant marquee words and the footer wordmark — the
+// same high-contrast family as the logo's BAKHOORA, so the two rhyme.
+const playfair = Playfair_Display({
+  subsets: ["latin"],
+  weight: ["700", "900"],
+  variable: "--font-playfair",
   display: "swap",
 });
 
@@ -43,7 +50,7 @@ export default async function RootLayout({
   const settings = await fetchShopSettings();
 
   return (
-    <html lang="en" className={poppins.variable}>
+    <html lang="en" className={`${urbanist.variable} ${playfair.variable}`}>
       <body className="min-h-dvh bg-paper text-ink">
         <ShopSettingsProvider settings={settings}>
           <AuthProvider>
