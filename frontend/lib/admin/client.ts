@@ -137,6 +137,49 @@ async function call<T>(path: string, token: string | null, init: RequestInit = {
 const body = (value: unknown) => JSON.stringify(value);
 
 /**
+ * `call` for a multipart upload that reports progress.
+ *
+ * fetch has no upload progress events, so this goes through XMLHttpRequest.
+ * `onProgress` gets 0–1 for the bytes sent to the API; at 1 the server is still
+ * storing the files, which the caller should show as its own state.
+ */
+function upload<T>(
+  path: string,
+  token: string,
+  form: FormData,
+  onProgress?: (fraction: number) => void,
+): Promise<T> {
+  if (!apiConfigured) {
+    return Promise.reject(new ApiError("NEXT_PUBLIC_API_URL is not set", 0, "not_configured"));
+  }
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${BASE_URL}${path}`);
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress?.(event.loaded / event.total);
+    };
+    xhr.onerror = () =>
+      reject(new ApiError("Could not reach the API. Is the server running?", 0, "network"));
+    xhr.onload = () => {
+      let payload: unknown = null;
+      try {
+        payload = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+      } catch {
+        // Non-JSON error page; messageFrom falls back to the status.
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(payload as T);
+        return;
+      }
+      const { message, code } = messageFrom(payload, xhr.status);
+      reject(new ApiError(message, xhr.status, code, payload));
+    };
+    xhr.send(form);
+  });
+}
+
+/**
  * Fetch a file rather than JSON.
  *
  * The export route is guarded like every other admin route, so the download
@@ -457,14 +500,15 @@ export const adminApi = {
   addImage: (token: string, productId: string, input: Record<string, unknown>) =>
     call<Product>(`/products/${productId}/images`, token, { method: "POST", body: body(input) }),
 
-  uploadImages: (token: string, productId: string, files: File[]) => {
+  uploadImages: (
+    token: string,
+    productId: string,
+    files: File[],
+    onProgress?: (fraction: number) => void,
+  ) => {
     const form = new FormData();
     for (const file of files) form.append("files", file);
-    // No Content-Type header: the browser has to set the multipart boundary.
-    return call<Product>(`/products/${productId}/images/upload`, token, {
-      method: "POST",
-      body: form,
-    });
+    return upload<Product>(`/products/${productId}/images/upload`, token, form, onProgress);
   },
 
   updateImage: (

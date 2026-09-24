@@ -24,6 +24,8 @@ export function ImageManager({ product, onDone }: { product: Product; onDone: ()
   const confirm = useConfirm();
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  // Share of bytes sent to the API, 0–1. At 1 the server is still storing them.
+  const [progress, setProgress] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
 
@@ -41,8 +43,9 @@ export function ImageManager({ product, onDone }: { product: Product; onDone: ()
       return;
     }
     setBusy(true);
+    setProgress(0);
     try {
-      await adminApi.uploadImages(token, product.id, files);
+      await adminApi.uploadImages(token, product.id, files, setProgress);
       notify(`${files.length} image${files.length === 1 ? "" : "s"} uploaded`);
       onDone();
     } catch (cause) {
@@ -208,8 +211,32 @@ export function ImageManager({ product, onDone }: { product: Product; onDone: ()
               onClick={() => input.current?.click()}
             >
               {busy ? <IconSpinner /> : <IconImage />}
-              {busy ? "Uploading…" : "Choose images"}
+              {busy ? (progress < 1 ? "Uploading…" : "Saving…") : "Choose images"}
             </Button>
+            {busy ? (
+              <div className="mx-auto mt-4 max-w-sm">
+                <div
+                  role="progressbar"
+                  aria-label="Upload progress"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(progress * 100)}
+                  className="h-1.5 overflow-hidden bg-paper-2"
+                >
+                  <div
+                    className={`h-full bg-[var(--color-green)] transition-[width] duration-200 ${
+                      progress >= 1 ? "animate-pulse" : ""
+                    }`}
+                    style={{ width: `${Math.round(progress * 100)}%` }}
+                  />
+                </div>
+                <p className="mt-1.5 text-xs tabular-nums text-muted">
+                  {progress < 1
+                    ? `${Math.round(progress * 100)}%`
+                    : "Uploaded — saving to storage…"}
+                </p>
+              </div>
+            ) : null}
             <p className="mt-3 text-xs text-muted">
               {free} of {MAX_PRODUCT_IMAGES} slot{free === 1 ? "" : "s"} free · JPEG, PNG,
               WebP, GIF, AVIF or HEIC · up to 5MB each
