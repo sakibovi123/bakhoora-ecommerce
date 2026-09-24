@@ -13,6 +13,7 @@ panel fills a form with it and a person presses Save, because a misread total
 does not announce itself — it just quietly moves the month's profit.
 """
 
+import asyncio
 import base64
 import json
 import uuid
@@ -335,7 +336,7 @@ async def read_receipt(db: AsyncSession, file: UploadFile) -> ReceiptDraft:
             f"Compatible."
         )
 
-    url = store_image(raw, file.filename, RECEIPTS_FOLDER)
+    url = await asyncio.to_thread(store_image, raw, file.filename, RECEIPTS_FOLDER)
     extension = url.rsplit(".", 1)[-1]
     data_url = (
         f"data:{_MIME.get(extension, 'image/jpeg')};base64,"

@@ -302,21 +302,13 @@ async def sales_report(
 ) -> SalesReport:
     _validate(start, end)
     unit = "month" if granularity == "monthly" else "day"
-    # A monthly report always begins at a month boundary, whatever day was
-    # asked for — otherwise the first bucket silently covers a part-month.
     if granularity == "monthly":
         start = start.replace(day=1)
     first, last = _utc_window(start, end)
-    # The window of equal length ending the day before `start`. `_utc_window`
-    # is half-open, so its upper bound is `first` exactly: one contiguous scan.
     span = (end - start).days + 1
     previous_first, _ = _utc_window(start - timedelta(days=span), start - timedelta(days=1))
 
     money, comparison = await _bucket_rows(db, unit, first, last, previous_first)
-    # Plain dates, never `first.date()`: those are UTC instants, and Dhaka
-    # midnight is 18:00 UTC the day before, so the lower bound would land a day
-    # early while the upper bound happened to be right. `start` here is already
-    # snapped to the first of the month for a monthly report.
     spend = await expense_service.totals(
         db,
         unit=unit,
@@ -348,11 +340,6 @@ async def sales_report(
                 average_order_value=_average(net, orders),
                 expenses=spent,
                 outstanding=owed,
-                # The full cost, not just what has been paid. A bill the shop
-                # has taken delivery of but not settled is still a cost of the
-                # month it was incurred in; treating the unpaid part as profit
-                # until the supplier is paid would flatter every month that
-                # bought on credit and punish the one that finally settled.
                 net_profit=net - spent,
             )
         )
@@ -376,8 +363,6 @@ async def sales_report(
         cancelled_value=sum((bucket.cancelled_value for bucket in buckets), _ZERO),
         average_order_value=_average(total_net, total_orders),
         previous_net_revenue=previous,
-        # Growth from nothing has no percentage. None so the panel shows a dash
-        # rather than a fabricated +100%.
         change_pct=(
             round(float((total_net - previous) / previous * 100), 1) if previous else None
         ),
@@ -386,24 +371,17 @@ async def sales_report(
         net_profit=total_profit,
         previous_expenses=spend.previous,
         previous_net_profit=previous_profit,
-        # Only when the window being compared against actually made money.
-        # Percentage change out of a loss has no sensible reading.
         net_profit_change_pct=(
             round(float((total_profit - previous_profit) / previous_profit * 100), 1)
             if previous_profit > 0
             else None
         ),
-        # Still revenue's best month, not profit's. Redefining a figure the
-        # operator already reads would be a silent change of meaning.
         best_period=best.period if best and best.net_revenue else None,
         best_period_revenue=best.net_revenue if best else _ZERO,
     )
 
     status_breakdown, payment_breakdown = await _breakdowns(db, first, last)
 
-    # Names are resolved here rather than joined into the aggregate: the
-    # category table is small and separately cached, and dragging a text column
-    # through GROUPING SETS buys nothing.
     names = {
         category.id: category.name
         for category in await expense_service.list_categories(db, include_inactive=True)

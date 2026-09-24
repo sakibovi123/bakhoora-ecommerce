@@ -23,9 +23,6 @@ class SalesBucket(BaseModel):
     cancelled_value: Decimal
     average_order_value: Decimal
     expenses: Decimal
-    # Of `expenses`, the part that is billed but not yet handed over. Net profit
-    # already counts the full cost, so this is not subtracted again — it is the
-    # separate question of what the shop still owes out of that spend.
     outstanding: Decimal
     net_profit: Decimal
 
@@ -47,8 +44,6 @@ class SalesSummary(BaseModel):
     change_pct: float | None
     previous_expenses: Decimal
     previous_net_profit: Decimal
-    # None rather than a number whenever the comparison window was not itself
-    # profitable: a percentage across a loss-to-profit sign flip is nonsense.
     net_profit_change_pct: float | None
     best_period: date | None
     best_period_revenue: Decimal

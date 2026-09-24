@@ -1,14 +1,21 @@
 """Storing uploaded product images.
 
-Local disk today. Everything the rest of the app touches goes through
-`save_image` / `delete_stored`, so swapping in Supabase Storage or S3 later is a
-matter of reimplementing those two functions.
+Supabase Storage when SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set, local
+disk otherwise. Everything the rest of the app touches goes through
+`save_image` / `delete_stored`.
+
+Object storage is what makes an upload visible everywhere: the database is
+shared between local and production, but a server's disk is not, so a
+`/media/...` path written on one machine is a 404 on every other one. Stored
+objects are recorded by their absolute public URL for the same reason.
 """
 
+import asyncio
 import uuid
 from pathlib import Path
 from typing import NamedTuple
 
+import httpx
 from fastapi import UploadFile
 
 from app.core.config import settings
@@ -74,7 +81,8 @@ def media_root(folder: str = PRODUCTS_FOLDER) -> Path:
 
 async def save_image(file: UploadFile, folder: str = PRODUCTS_FOLDER) -> str:
     """Validate and store one upload. Returns the URL to serve it from."""
-    return store_image(await file.read(), file.filename, folder)
+    # Off the event loop: with object storage this is a network round trip.
+    return await asyncio.to_thread(store_image, await file.read(), file.filename, folder)
 
 
 def store_image(payload: bytes, filename: str | None, folder: str = PRODUCTS_FOLDER) -> str:
@@ -105,8 +113,53 @@ def store_image(payload: bytes, filename: str | None, folder: str = PRODUCTS_FOL
     # Never reuse the client's filename: it may collide, contain a path, or
     # carry an extension that disagrees with the actual bytes.
     name = f"{uuid.uuid4().hex}.{extension}"
+    if settings.uses_object_storage:
+        return _upload_object(f"{folder}/{name}", payload, extension)
     (media_root(folder) / name).write_bytes(payload)
     return f"{settings.MEDIA_URL}/{folder}/{name}"
+
+
+_CONTENT_TYPES = {
+    "jpg": "image/jpeg",
+    "png": "image/png",
+    "gif": "image/gif",
+    "webp": "image/webp",
+    "avif": "image/avif",
+    "heic": "image/heic",
+}
+
+
+def _storage_api() -> str:
+    return f"{settings.SUPABASE_URL.rstrip('/')}/storage/v1"
+
+
+def public_url(key: str) -> str:
+    """Where a stored object is served from. The bucket must be public."""
+    return f"{_storage_api()}/object/public/{settings.MEDIA_BUCKET}/{key}"
+
+
+def _headers() -> dict[str, str]:
+    key = settings.SUPABASE_SERVICE_ROLE_KEY
+    return {"Authorization": f"Bearer {key}", "apikey": key}
+
+
+def _upload_object(key: str, payload: bytes, extension: str) -> str:
+    response = httpx.post(
+        f"{_storage_api()}/object/{settings.MEDIA_BUCKET}/{key}",
+        content=payload,
+        headers={
+            **_headers(),
+            "Content-Type": _CONTENT_TYPES[extension],
+            # Names are random and never rewritten, so the file never changes.
+            "Cache-Control": "max-age=31536000",
+        },
+        timeout=30,
+    )
+    if response.is_error:
+        raise BusinessRuleError(
+            f"The image could not be stored ({response.status_code}): {response.text[:200]}"
+        )
+    return public_url(key)
 
 
 class _Named(NamedTuple):
@@ -118,12 +171,30 @@ class _Named(NamedTuple):
 def delete_stored(url: str) -> None:
     """Remove a file this module wrote. Ignores anything it did not."""
     for folder in _FOLDERS:
-        prefix = f"{settings.MEDIA_URL}/{folder}/"
-        if not url.startswith(prefix):
+        local_prefix = f"{settings.MEDIA_URL}/{folder}/"
+        object_prefix = public_url(f"{folder}/") if settings.SUPABASE_URL.strip() else None
+        if url.startswith(local_prefix):
+            name = url[len(local_prefix) :]
+        elif object_prefix and url.startswith(object_prefix):
+            name = url[len(object_prefix) :]
+        else:
             continue
-        name = url[len(prefix) :]
         # Defend the storage root against a crafted row in the database.
         if "/" in name or "\\" in name or name in {"", ".", ".."}:
             return
-        (media_root(folder) / name).unlink(missing_ok=True)
+        if url.startswith(local_prefix):
+            (media_root(folder) / name).unlink(missing_ok=True)
+        elif settings.uses_object_storage:
+            # Best effort, like the local unlink: an orphaned object costs a
+            # few KB, failing the request that removed its row costs more.
+            try:
+                httpx.request(
+                    "DELETE",
+                    f"{_storage_api()}/object/{settings.MEDIA_BUCKET}",
+                    json={"prefixes": [f"{folder}/{name}"]},
+                    headers=_headers(),
+                    timeout=15,
+                )
+            except httpx.HTTPError:
+                pass
         return

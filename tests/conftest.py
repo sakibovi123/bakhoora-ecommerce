@@ -26,6 +26,12 @@ assert TEST_SCHEMA != "public"
 
 
 @pytest.fixture(autouse=True)
+def local_media(monkeypatch):
+    """Uploads go to disk in tests, never to the real Supabase bucket."""
+    monkeypatch.setattr(settings, "SUPABASE_SERVICE_ROLE_KEY", "")
+
+
+@pytest.fixture(autouse=True)
 def reset_cache():
     """The cache is a module-level singleton; the database is not.
 

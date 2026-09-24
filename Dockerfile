@@ -35,8 +35,9 @@ COPY alembic.ini ./
 COPY alembic ./alembic
 COPY app ./app
 
-# Uploaded product images land here. On Railway this path is ephemeral unless a
-# volume is mounted on it — see the deployment notes.
+# Local fallback for uploads only. Deployed, set SUPABASE_URL and
+# SUPABASE_SERVICE_ROLE_KEY so uploads go to Supabase Storage: this path is
+# ephemeral on Railway and never shared with other environments.
 RUN mkdir -p /app/media
 
 # Railway injects PORT; 8000 is only the local default.

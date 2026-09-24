@@ -104,6 +104,12 @@ class Settings(BaseSettings):
 
     MEDIA_ROOT: str = "media"
     MEDIA_URL: str = "/media"
+    # Supabase Storage bucket for uploads. Used whenever SUPABASE_URL and
+    # SUPABASE_SERVICE_ROLE_KEY are both set; otherwise uploads fall back to
+    # MEDIA_ROOT on local disk. A deployed container's disk is neither shared
+    # with other environments nor kept across redeploys, so production must
+    # have the key set or its uploads will vanish.
+    MEDIA_BUCKET: str = "media"
 
     CURRENCY: str = "BDT"
     SHIPPING_FLAT_FEE: Decimal = Decimal("70")
@@ -167,6 +173,10 @@ class Settings(BaseSettings):
     @property
     def is_local(self) -> bool:
         return self.ENVIRONMENT.strip().lower() in LOCAL_ENVIRONMENTS
+
+    @property
+    def uses_object_storage(self) -> bool:
+        return bool(self.SUPABASE_URL.strip() and self.SUPABASE_SERVICE_ROLE_KEY.strip())
 
     @property
     def cors_origins(self) -> list[str]:
